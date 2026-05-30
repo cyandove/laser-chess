@@ -242,7 +242,8 @@ spendActions(integer cost) {
     gState = GS_IDLE;
     gSelX = -1; gSelY = -1;
     if (gActionsLeft <= 0) {
-        gCurPlayer = (gCurPlayer == P_RED) ? P_GREEN : P_RED;
+        if (gCurPlayer == P_RED) gCurPlayer = P_GREEN;
+        else gCurPlayer = P_RED;
         gActionsLeft = ACTIONS_PER_TURN;
     }
     announceTurn();
@@ -408,7 +409,8 @@ doFire() {
 
     if (!isStun && llGetSubString(res,0,3) == "king") {
         integer loser  = (integer)llGetSubString(res,5,-1);
-        integer winner = (loser == P_RED) ? P_GREEN : P_RED;
+        integer winner = P_RED;
+        if (loser == P_RED) winner = P_GREEN;
         setStatus(playerName(winner) + " WINS! Touch the board to restart.");
         llMessageLinked(LINK_ALL_CHILDREN, LM_GAME_OVER, (string)winner, NULL_KEY);
         gState = GS_GAMEOVER;
