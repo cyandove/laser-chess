@@ -79,9 +79,10 @@ default {
 
         // Rez with a temporary name containing coords so builder_layout.lsl
         // can also verify positions independently if needed.
-        // The rezzed prim's start param encodes col + row*100 for identification.
+        // Start param encodes (1 + col + row*100); the +1 keeps cell (0,0)
+        // from colliding with on_rez's "param == 0 = rezzed manually" sentinel.
         llRezObject(CELL_ITEM, rezPos, ZERO_VECTOR, gRot,
-                    gCol + gRow * 100);
+                    1 + gCol + gRow * 100);
 
         ++gTotal;
         ++gCol;

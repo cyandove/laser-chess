@@ -12,8 +12,10 @@ default {
     on_rez(integer param) {
         if (param == 0) return; // rezzed manually, not by rezzer
 
-        integer col = param % 100;
-        integer row = param / 100;
+        // Rezzer passes (1 + col + row*100); subtract the +1 offset back out.
+        integer enc = param - 1;
+        integer col = enc % 100;
+        integer row = enc / 100;
         llSetObjectName("cell_" + (string)col + "_" + (string)row);
         llSetObjectDesc((string)col + "," + (string)row);
 
