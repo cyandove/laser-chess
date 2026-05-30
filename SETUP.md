@@ -24,11 +24,29 @@ the cell-flash keep working.
 ## Naming child prims
 
 Each of the 165 cell prims **must** be named `cell_X_Y` (e.g. `cell_0_0`, `cell_7_5`).
-X = 0–14 (west→east), Y = 0–10 (north→south).
+X = 0–14 (west→east), Y = 0–10 (north→south). Every cell needs `piece.lsl` even if it
+starts empty — empty cells handle highlighting and destination clicks.
 
-A quick way: rez a script in a single prim to auto-name siblings, or name them manually.
-Cells that have no piece at game start still need the script — they handle highlighting
-and destination clicks.
+Two builder scripts automate the tedious part. Their file headers carry full
+step-by-step usage; in short:
+
+**Workflow A — rezzer (recommended, fully automated)**
+1. Make one flat box prim named `lc_cell`; put `piece.lsl` + `builder_cell_onrez.lsl`
+   inside it.
+2. Make a second prim (the rezzer); put `builder_rezzer.lsl` + the `lc_cell` object
+   inside it; position it at the board's northwest corner.
+3. Touch the rezzer → it rezzes 165 cell prims in a 15×11 grid, auto-named `cell_X_Y`.
+4. Select all 165 + the board root (root last), link, then run Workflow B step 3 to
+   finalize positions.
+
+**Workflow B — layout (positions/renames already-linked prims)**
+1. Duplicate one flat prim to 165, link them all under the board root.
+2. Drop `builder_layout.lsl` into the root prim.
+3. Touch the root → it names and positions every child cell (one row per timer tick).
+4. Remove `builder_layout.lsl`; drop in `game_controller.lsl`.
+
+`CELL_SIZE` defaults to `1.0`m (a 15×11m board) — keep it identical in both
+`builder_rezzer.lsl` and `builder_layout.lsl` if you change it.
 
 ## Touch UV mapping
 
@@ -84,9 +102,7 @@ Orientation: 0=N 1=E 2=S 3=W (direction the active face points)
 
 ## Gameplay
 
-- Players alternate; each gets **2 actions** per turn.
-- Touch any of your pieces → dialog appears: Move / Rotate CW / Rotate CCW / Fire / Cancel.
-- **Move**: touch the highlighted destination cell.
-- **Fire**: traces the laser; pieces hit on non-reflective sides are removed.
-- If the laser reaches the opponent's King, that player wins.
-- Touch board after game over to restart.
+See **[INSTRUCTIONS.md](INSTRUCTIONS.md)** for the rules, the full piece roster, how
+the laser/mirrors behave, and win conditions. Quick version: players alternate, 2
+actions each turn (move / rotate / fire); reach the opponent's King with the laser to
+win.
