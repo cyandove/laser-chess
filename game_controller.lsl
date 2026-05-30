@@ -420,6 +420,25 @@ doFire() {
 // ============================================================
 // INPUT
 // ============================================================
+
+// Execute a (possibly capturing) move. Stomping the enemy King wins.
+doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
+    integer captured = bGet(tx, ty);
+    integer mv = bGet(fx, fy);
+    bSet(tx, ty, mv);
+    bSet(fx, fy, 0);
+    pushCell(fx, fy);
+    pushCell(tx, ty);
+    if (cType(captured) == T_KING) {
+        integer winner = cOwner(mv);
+        setStatus(playerName(winner) + " WINS by capture! Touch the board to restart.");
+        llMessageLinked(LINK_ALL_CHILDREN, LM_GAME_OVER, (string)winner, NULL_KEY);
+        gState = GS_GAMEOVER;
+        return;
+    }
+    spendActions(cost);
+}
+
 handleTouch(integer x, integer y) {
     if (gState == GS_GAMEOVER) {
         initBoard();
@@ -447,10 +466,7 @@ handleTouch(integer x, integer y) {
     } else if (gState == GS_AWAIT_DST) {
         integer cost = moveCost(gSelX, gSelY, x, y, gActionsLeft);
         if (cost > 0) {
-            integer mv = bGet(gSelX, gSelY);
-            bSet(x, y, mv);  bSet(gSelX, gSelY, 0);
-            pushCell(gSelX, gSelY); pushCell(x, y);
-            spendActions(cost);
+            doMove(gSelX, gSelY, x, y, cost);
         } else {
             gState = GS_SELECTED;
             clearHL();
@@ -506,12 +522,9 @@ applyAIMove(string move) {
     if (cmd == "MOVE") {
         integer tx = llList2Integer(xy,2);
         integer ty = llList2Integer(xy,3);
-        gSelX = ax; gSelY = ay;
         integer cost = moveCost(ax, ay, tx, ty, gActionsLeft);
         if (cost < 1) cost = 1;
-        bSet(tx, ty, c); bSet(ax, ay, 0);
-        pushCell(ax, ay); pushCell(tx, ty);
-        spendActions(cost);
+        doMove(ax, ay, tx, ty, cost);
     } else if (cmd == "ROTATE_CW") {
         bSet(ax, ay, mkCell(cType(c),cOwner(c),(cOrient(c)+1)%8,cStun(c),cBombDiag(c)));
         pushCell(ax, ay);
