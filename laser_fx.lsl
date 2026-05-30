@@ -35,6 +35,7 @@ list    gCellPos;
 list    gBeamPts;        // list of world-space vectors for current shot
 integer gStep;           // index into gBeamPts
 vector  gHome;           // this prim's resting region position
+float   gCellSpacing = 1.0; // world distance between adjacent cells
 
 // ============================================================
 // Build the cell -> world-position cache
@@ -61,6 +62,15 @@ vector cellWorld(string xy) {
     integer idx = llListFindList(gCellPos, [xy]);
     if (idx < 0) return ZERO_VECTOR;
     return llList2Vector(gCellPos, idx + 1);
+}
+
+// Distance between two horizontally-adjacent cells, used to tell a normal
+// one-cell beam step from a fork jump (where the DFS path leaps from the end
+// of one branch back to a splitter to start the other).
+measureSpacing() {
+    vector a = cellWorld("0,0");
+    vector b = cellWorld("1,0");
+    if (a != ZERO_VECTOR && b != ZERO_VECTOR) gCellSpacing = llVecDist(a, b);
 }
 
 // ============================================================
@@ -105,6 +115,7 @@ default {
         gHome = llList2Vector(
             llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POSITION]), 0);
         buildCellCache();
+        measureSpacing();
     }
 
     // Rebuild the cache if the build changes (prims added/moved/renamed).
@@ -113,6 +124,7 @@ default {
             gHome = llList2Vector(
                 llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POSITION]), 0);
             buildCellCache();
+            measureSpacing();
         }
     }
 
@@ -145,7 +157,18 @@ default {
         ++gStep;
 
         if (gStep < llGetListLength(gBeamPts)) {
-            moveTo(llList2Vector(gBeamPts, gStep));
+            vector cur  = llList2Vector(gBeamPts, gStep);
+            vector prev = llList2Vector(gBeamPts, gStep - 1);
+            // A jump bigger than one cell means the DFS path crossed from one
+            // split fork to another. Break the ribbon so it doesn't draw a
+            // line across the board: stop emitting, teleport, start fresh.
+            if (llVecDist(prev, cur) > gCellSpacing * 1.5) {
+                stopRibbon();
+                moveTo(cur);
+                startRibbon();
+            } else {
+                moveTo(cur);
+            }
             return;
         }
 

@@ -245,8 +245,13 @@ string fireLaser(integer player) {
     string path = (string)lx+","+(string)ly;
     string gameResult = "";
 
-    // Queue: groups of 3 ints [x, y, dir, …]
-    // Seeded with the laser's initial shot direction
+    // Beam-front stack: groups of 3 ints [x, y, dir, …].
+    // Processed DFS (pop the front, PREPEND new fronts) so each fork is
+    // traced to its end before the next one starts. This keeps split
+    // branches contiguous in `path`, letting laser_fx render them without
+    // zig-zagging between forks. Game outcome is identical to BFS — the
+    // same cells are visited and the same pieces hit, just in a different
+    // order.
     list queue = [lx, ly, cOrient(bGet(lx,ly))];
     list visited = [];
     integer maxSteps = 200; // guard against infinite loops
@@ -272,15 +277,16 @@ string fireLaser(integer player) {
         string res = laserInteract(nx, ny, cdir);
 
         if (res == "pass") {
-            queue += [nx, ny, cdir];
+            queue = [nx, ny, cdir] + queue;
         } else if (llGetSubString(res,0,6) == "reflect") {
             integer nd = (integer)llGetSubString(res,8,-1);
-            queue += [nx, ny, nd];
+            queue = [nx, ny, nd] + queue;
         } else if (llGetSubString(res,0,4) == "split") {
             list p = llParseString2List(res,[":"],[]);
             integer d1 = (integer)llList2String(p,1);
             integer d2 = (integer)llList2String(p,2);
-            queue += [nx, ny, d1, nx, ny, d2];
+            // Prepend both forks; d1 runs to completion first (DFS).
+            queue = [nx, ny, d1, nx, ny, d2] + queue;
         } else if (llGetSubString(res,0,6) == "destroy") {
             list p = llParseString2List(res,[":"],[]);
             list xy = llParseString2List(llList2String(p,1),[","],[]);
