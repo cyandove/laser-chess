@@ -8,7 +8,18 @@ One linked object, root prim = game board face:
 Root prim          ← game_controller.lsl
 Child prims ×165   ← piece.lsl  (one per board cell)
 Any child prim     ← ai_controller.lsl  (one copy anywhere in linkset)
+1 child prim        ← laser_fx.lsl  (optional, named "fxbeam" — beam ribbon FX)
 ```
+
+## Laser beam FX (optional)
+
+`laser_fx.lsl` adds a glowing particle ribbon that traces the beam's real path on
+each shot, on top of the per-cell flash that `piece.lsl` already does. Put it in one
+dedicated child prim — keep that prim small; it auto-names itself `fxbeam` and hides
+its own faces so only the particles show. It caches every `cell_X_Y` position at
+start-up, so add/position it **after** the board cells are laid out (it also rescans
+on `CHANGED_LINK`). Delete the prim or the script to disable the ribbon; the game and
+the cell-flash keep working.
 
 ## Naming child prims
 
