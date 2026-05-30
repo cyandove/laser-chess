@@ -1,12 +1,13 @@
 // ============================================================
-// Advanced Laser Chess — Game Controller  (ALC rewrite, Phase 1)
+// Advanced Laser Chess — Game Controller  (ALC rewrite, Phase 2)
 // Root prim of the board linkset. Children run piece.lsl.
 //
-// Phase 1 scope: cell model (12 types, 8 orientations), full ALC
-// starting board, rendering, 3 actions/turn, orthogonal move (diagonal
-// costs 2), 45-degree rotation, capture-by-moving (King + Octagons).
-// Beam physics (Laser/Stunner) and special mechanics (Bomb, Hypergon,
-// Holes, stun/thaw) arrive in Phase 2 / Phase 3 — Fire is stubbed.
+// Done: cell model (12 types, 8 orientations), full ALC starting board,
+// rendering, 3 actions/turn, orthogonal move (diagonal costs 2),
+// 45-degree rotation, capture-by-moving (King + Octagons), and 8-direction
+// beam physics for Laser (destroys) and Stunner (stuns).
+// Deferred to Phase 3: Bomb area effect, stun/thaw enforcement, Hyper Hole
+// displacement, Hole removal-on-entry, once-per-turn caps.
 //
 // Board: 15 wide (x 0-14, W->E) x 11 tall (y 0-10, N->S).
 // Red = cols 0-2 (west), Green = cols 12-14 (east). See ALC_DESIGN.md.
@@ -95,7 +96,6 @@ integer bOk(integer x, integer y) { return x>=0 && x<BOARD_W && y>=0 && y<BOARD_
 
 integer dirDX(integer o) { return llList2Integer(DDX, o); }
 integer dirDY(integer o) { return llList2Integer(DDY, o); }
-integer isCardinal(integer o) { return (o % 2) == 0; }
 
 // ============================================================
 // MESSAGING
@@ -224,20 +224,6 @@ showDestinations() {
 }
 
 // ============================================================
-// FIRE  (stub — Phase 2)
-// ============================================================
-doFire() {
-    integer c = bGet(gSelX, gSelY);
-    integer t = cType(c);
-    if (t != T_LASER && t != T_STUNNER) {
-        setStatus("Only a Laser or Stunner can fire.");
-        return;
-    }
-    setStatus("Beam physics arrive in Phase 2 — fire is not active yet.");
-    // No action consumed in Phase 1.
-}
-
-// ============================================================
 // TURN MANAGEMENT
 // ============================================================
 announceTurn() {
@@ -260,6 +246,175 @@ spendActions(integer cost) {
         gActionsLeft = ACTIONS_PER_TURN;
     }
     announceTurn();
+}
+
+// ============================================================
+// BEAM PHYSICS (Phase 2)
+// Beams travel in any of the 8 directions. Mirror interactions use a
+// single vector-reflection rule:  v' = v - 2(v·n)/(n·n) n , where n is
+// the reflective face's outward normal. sign(v·n): <0 front (reflect),
+// >0 back (destroy), ==0 graze (pass). Same rule covers flat mirrors
+// (cardinal normal) and 45° deflectors (diagonal normal).
+// ============================================================
+
+// direction index <- vector
+integer dirFromVec(integer dx, integer dy) {
+    integer i;
+    for (i=0; i<8; ++i)
+        if (llList2Integer(DDX,i)==dx && llList2Integer(DDY,i)==dy) return i;
+    return -1;
+}
+// reflect travel-dir d off a face whose outward normal points 'nrm'
+integer reflectOff(integer d, integer nrm) {
+    integer vx = dirDX(d);  integer vy = dirDY(d);
+    integer nx = dirDX(nrm); integer ny = dirDY(nrm);
+    integer dot = vx*nx + vy*ny;
+    integer nn  = nx*nx + ny*ny;          // 1 cardinal, 2 diagonal
+    integer f   = (2*dot) / nn;
+    return dirFromVec(vx - f*nx, vy - f*ny);
+}
+integer dotDir(integer d, integer nrm) {
+    return dirDX(d)*dirDX(nrm) + dirDY(d)*dirDY(nrm);
+}
+// the two directions perpendicular (±90°) to d
+list perpDirs(integer d) {
+    return [(d+2)%8, (d+6)%8];
+}
+integer inShieldArc(integer face, integer o) {
+    return (face==o || face==(o+1)%8 || face==(o+7)%8);
+}
+
+// What happens when a beam travelling 'd' enters cell (x,y)?
+// Returns: pass | absorb | random | hit | king | reflect:D | split:D1:D2
+string laserInteract(integer x, integer y, integer d) {
+    integer cell = bGet(x,y);
+    integer t = cType(cell);
+    integer o = cOrient(cell);
+
+    if (t == T_EMPTY)                       return "pass";
+    if (t == T_HOLE || t == T_HYPERHOLE)    return "absorb";
+    if (t == T_HYPERGON)                    return "random";
+    if (t == T_KING)                        return "king";
+    if (t == T_LASER || t == T_STUNNER || t == T_BOMB) return "hit"; // bomb area: Phase 3
+    if (t == T_FOCT)                        return "reflect:" + (string)((d+4)%8);
+
+    if (t == T_POCT) {
+        integer face = (d+4)%8;             // face the beam strikes
+        if (inShieldArc(face, o)) return "reflect:" + (string)((d+4)%8);
+        return "hit";
+    }
+
+    if (t == T_ONEWAY) {                    // arrow points cardinal o
+        integer dt = dotDir(d, o);
+        if (dt > 0) return "pass";                      // with the arrow
+        if (dt < 0) return "reflect:" + (string)reflectOff(d, o); // against
+        return "hit";                                   // perpendicular destroys
+    }
+
+    if (t == T_SPLITTER) {                  // vertex points cardinal o
+        if (d == (o+4)%8) {                 // head-on into the vertex
+            list pc = perpDirs(d);
+            return "split:" + (string)llList2Integer(pc,0)
+                       + ":" + (string)llList2Integer(pc,1);
+        }
+        if (d == o) return "hit";           // back face exposed
+        return "pass";                      // off-axis / diagonal: misses
+    }
+
+    if (t == T_TRIMIR) {                    // normal = orient (flat or 45°)
+        integer dt = dotDir(d, o);
+        if (dt == 0) return "pass";         // graze
+        if (dt > 0)  return "hit";          // back face -> destroy
+        return "reflect:" + (string)reflectOff(d, o);
+    }
+
+    return "absorb";
+}
+
+// apply weapon effect to the piece at (x,y)
+applyHit(integer x, integer y, integer isStun) {
+    integer c = bGet(x,y);
+    if (isStun)
+        bSet(x, y, mkCell(cType(c), cOwner(c), cOrient(c), 1, cBombDiag(c)));
+    else
+        bSet(x, y, 0);
+    pushCell(x, y);
+}
+
+// Trace a beam from weapon at (ox,oy). isStun => non-destructive (stun).
+// Returns "king:owner" if a King was struck by a (non-stun) beam, else "".
+string fireBeam(integer ox, integer oy, integer isStun) {
+    integer startDir = cOrient(bGet(ox,oy));
+    string path = (string)ox + "," + (string)oy;
+    string result = "";
+    list queue = [ox, oy, startDir];        // DFS: pop front, prepend
+    list visited = [];
+    integer maxSteps = 400;
+
+    while (llGetListLength(queue) >= 3 && maxSteps > 0) {
+        --maxSteps;
+        integer cx = llList2Integer(queue,0);
+        integer cy = llList2Integer(queue,1);
+        integer cd = llList2Integer(queue,2);
+        queue = llDeleteSubList(queue, 0, 2);
+
+        integer nx = cx + dirDX(cd);
+        integer ny = cy + dirDY(cd);
+        if (!bOk(nx,ny)) jump nxt;
+
+        string vkey = (string)nx+","+(string)ny+","+(string)cd;
+        if (llListFindList(visited,[vkey]) >= 0) jump nxt;
+        visited += [vkey];
+
+        path += ";" + (string)nx + "," + (string)ny;
+        string res = laserInteract(nx, ny, cd);
+
+        if (res == "pass") {
+            queue = [nx, ny, cd] + queue;
+        } else if (llGetSubString(res,0,6) == "reflect") {
+            integer rd = (integer)llGetSubString(res,8,-1);
+            queue = [nx, ny, rd] + queue;
+        } else if (llGetSubString(res,0,4) == "split") {
+            list pp = llParseString2List(res,[":"],[]);
+            integer d1 = (integer)llList2String(pp,1);
+            integer d2 = (integer)llList2String(pp,2);
+            queue = [nx, ny, d1, nx, ny, d2] + queue;
+        } else if (res == "random") {
+            integer rr = (integer)llFrand(8.0);
+            queue = [nx, ny, rr] + queue;
+        } else if (res == "hit") {
+            applyHit(nx, ny, isStun);
+        } else if (res == "king") {
+            if (isStun) applyHit(nx, ny, 1);
+            else result = "king:" + (string)cOwner(bGet(nx,ny));
+        }
+        // "absorb" -> beam ends here
+
+        @nxt;
+    }
+
+    llMessageLinked(LINK_ALL_CHILDREN, LM_LASER_PATH, path, NULL_KEY);
+    return result;
+}
+
+doFire() {
+    integer t = cType(bGet(gSelX, gSelY));
+    if (t != T_LASER && t != T_STUNNER) {
+        setStatus("Only a Laser or Stunner can fire.");
+        return;
+    }
+    integer isStun = (t == T_STUNNER);
+    string res = fireBeam(gSelX, gSelY, isStun);
+
+    if (!isStun && llGetSubString(res,0,3) == "king") {
+        integer loser  = (integer)llGetSubString(res,5,-1);
+        integer winner = (loser == P_RED) ? P_GREEN : P_RED;
+        setStatus(playerName(winner) + " WINS! Touch the board to restart.");
+        llMessageLinked(LINK_ALL_CHILDREN, LM_GAME_OVER, (string)winner, NULL_KEY);
+        gState = GS_GAMEOVER;
+        return;
+    }
+    spendActions(1);    // firing costs one action
 }
 
 // ============================================================

@@ -88,3 +88,30 @@ Index 0–7, clockwise from north:
 | 100 | CONFIG | → | `RESET`,`AI_ON`,`AI_OFF`,`AI_RED`,`AI_GREEN` |
 
 Players are now **Red (1)** and **Green (2)**.
+
+## Beam model (Phase 2)
+
+Beams travel in any of the **8 directions** (lasers/stunners can fire diagonally).
+A single reflection rule covers every mirror: with the reflective face's outward
+normal `n` and beam velocity `v`, the reflected dir is `v' = v − 2(v·n)/(n·n)·n`,
+and `sign(v·n)` decides the outcome — `<0` front → reflect, `>0` back → destroy,
+`==0` graze → pass. (`n·n` = 1 for a cardinal normal, 2 for a diagonal one.)
+
+Per-piece, given incoming travel dir `d`:
+
+| Piece | Behaviour |
+|-------|-----------|
+| Empty | pass |
+| Hole / Hyper Hole | absorb (beam ends) |
+| Hypergon | re-emit in a random direction (indestructible) |
+| King | beam hit → laser: that owner loses; stunner: King stunned |
+| Laser / Stunner / Bomb | non-reflective → hit (destroyed, or stunned). Bomb area effect = Phase 3 |
+| Fully-Mirrored Octagon | reflect 180° (`(d+4)%8`), indestructible |
+| Partially-Mirrored Octagon | struck face `(d+4)%8` in shield arc {o−1,o,o+1} → reflect 180°; else destroyed |
+| One-Way Mirror (arrow o) | `v·o>0` pass (with arrow); `<0` reflect off flat o-plane; `==0` perpendicular → destroyed |
+| Beam Splitter (vertex o) | head-on into vertex (`d=(o+4)%8`) → split into the two ⟂ dirs; into back (`d=o`) → destroyed; otherwise misses (passes) |
+| Triangular Mirror (normal o) | front (`v·o<0`) → reflect; back (`v·o>0`) → destroyed; graze (`v·o=0`) → pass. Cardinal o = flat 180° mirror; diagonal o = 45° deflector |
+
+**Friendly fire is real** and there is no firing-piece immunity — a returning beam
+can destroy/stun the piece that fired it. Splitter forks are traced DFS so each
+branch stays contiguous for the ribbon FX.
