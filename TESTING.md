@@ -36,7 +36,12 @@ The board is **15 × 11 = 165 cells**. Easiest path uses the rezzer.
 1. Rez a small prim — this is the temporary rezzer (not part of the final board).
 2. Drop **`builder_rezzer.lsl`** and the **`lc_cell`** object into its Contents.
 3. Move the rezzer to where you want the board's **northwest corner** (cell 0,0).
-4. **Touch** it → it rezzes 165 cells in a 15×11 grid, auto-named `cell_0_0` … `cell_14_10`.
+   The board extends **east (+X)** and **south (−Y)** from there, so keep the whole
+   15×11 m area **well inside the region** (not near an edge).
+4. **Touch** it → it rezzes 165 cells *at the rezzer*, and each cell then **moves
+   itself** to its slot, auto-named `cell_0_0` … `cell_14_10`.
+   (Cells must self-position because `llRezObject` can't reach the far side of the
+   board ~18 m away; they relocate with `llSetRegionPos`.)
 
 ### 1c. Make the board root + link
 1. Rez a flat prim for the **board base** (≈15 × 11 m). This becomes the **root**.
@@ -55,8 +60,10 @@ The board is **15 × 11 = 165 cells**. Easiest path uses the rezzer.
 2. (Optional) add one more small child prim, name it anything, drop **`laser_fx.lsl`**
    in it for the beam ribbon. Add it **after** layout so it caches cell positions
    correctly (it rescans on link changes anyway).
-3. On reset/rez, the root shows hovertext "Red's turn — 3 action(s) left." and the
-   board paints the starting position.
+3. **Reset Scripts in Selection** on the whole linkset (Build ▸ Scripts ▸ Reset Scripts
+   in Selection) so every `piece.lsl` re-reads its `cell_X_Y` name.
+4. The root shows hovertext "Red's turn — 3 action(s) left." and the board paints the
+   starting position.
 
 `CELL_SIZE` defaults to **1.0 m** in both builder scripts — keep them equal if you change it.
 
@@ -148,8 +155,11 @@ These arrive in **Phase 3**:
 
 ## 6. Troubleshooting
 
-- **Pieces blank / wrong squares**: a cell prim isn't named `cell_X_Y`. Re-run
-  `builder_layout.lsl`, or check the link/name.
+- **Some cells stayed stacked at the NW corner**: those cells' target was outside the
+  region, so `llSetRegionPos` refused to move them. Move the rezzer further from the
+  region edge (the board needs ~15 m east and ~11 m south of the corner) and re-rez.
+- **Pieces blank / wrong squares**: a cell prim isn't named `cell_X_Y`, or `piece.lsl`
+  didn't re-read its name — Reset Scripts in Selection, or re-run `builder_layout.lsl`.
 - **Nothing happens on touch**: make sure `game_controller.lsl` is in the **root** and
   every cell has `piece.lsl`.
 - **Board never paints**: the controller waits 1s on start then broadcasts; if you reset

@@ -159,6 +159,10 @@ default {
     }
 
     link_message(integer sender_num, integer num, string str, key id) {
+        // If we never resolved our cell name (e.g. named/linked after this
+        // script's state_entry ran), try again now that the game is talking.
+        if (gMyX < 0) parsePosition();
+
         if (num == LM_CELL_UPDATE) {
             list p = llParseString2List(str, [","], []);
             if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY)

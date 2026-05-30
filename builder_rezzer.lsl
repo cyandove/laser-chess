@@ -9,17 +9,23 @@
 //   2. Create a second prim — this is your rezzer controller.
 //      Drop THIS script + the lc_cell prim into the rezzer's inventory.
 //   3. Position the rezzer where you want the NORTHWEST corner of the board
-//      (cell 0,0 will appear at the rezzer's location).
-//   4. Touch the rezzer → it rezzes all 165 cell prims in a grid.
+//      (cell 0,0 ends up at the rezzer's location). Keep the whole 15x11 m
+//      board inside the region (board extends east +X and south -Y from here).
+//   4. Touch the rezzer → it rezzes 165 cells AT the rezzer; each cell then
+//      moves itself to its grid slot (see builder_cell_onrez.lsl).
 //   5. Select all 165 rezzed prims + your board root prim, link them
 //      (root prim selected LAST), then run builder_layout.lsl.
+//
+// Why self-positioning: llRezObject can only rez within ~10 m of the rezzer,
+// but the board's far corner is ~18 m away — so cells can't be rezzed in
+// place. They are rezzed at the rezzer and relocate themselves via
+// llSetRegionPos (which, unlike llSetPos, has no 10 m move limit in-region).
 //
 // The rezzer itself is NOT part of the final board — delete it after linking.
 // ============================================================
 
-string CELL_ITEM  = "lc_cell";  // inventory name of the cell prim template
-float  CELL_SIZE  = 1.0;        // must match builder_layout.lsl
-float  CELL_ZOFF  = 0.025;      // small lift so prims don't z-fight
+string CELL_ITEM = "lc_cell";   // inventory name of the cell prim template
+// (cell SIZE and Z-offset live in builder_cell_onrez.lsl, which positions cells)
 
 integer BOARD_W = 15;
 integer BOARD_H = 11;
@@ -68,20 +74,13 @@ default {
             return;
         }
 
-        // Compute rez position: origin is NW corner (col=0, row=0)
-        // Each step goes east (local +X) for col, south (local -Y) for row
-        vector localOffset = <
-            (float)gCol * CELL_SIZE,
-            -((float)gRow * CELL_SIZE),
-            CELL_ZOFF
-        >;
-        vector rezPos = gOrigin + (localOffset * gRot);
-
-        // Rez with a temporary name containing coords so builder_layout.lsl
-        // can also verify positions independently if needed.
+        // Rez every cell AT the rezzer (distance 0, well within rez range);
+        // the cell relocates itself to (col,row) from this same origin point.
+        // gOrigin is the NW corner; the cell uses its own rez pos + rotation
+        // to compute its slot, so all cells must share this origin/rotation.
         // Start param encodes (1 + col + row*100); the +1 keeps cell (0,0)
         // from colliding with on_rez's "param == 0 = rezzed manually" sentinel.
-        llRezObject(CELL_ITEM, rezPos, ZERO_VECTOR, gRot,
+        llRezObject(CELL_ITEM, gOrigin, ZERO_VECTOR, gRot,
                     1 + gCol + gRow * 100);
 
         ++gTotal;
