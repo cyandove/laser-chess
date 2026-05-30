@@ -34,19 +34,24 @@ step-by-step usage; in short:
 1. Make one flat box prim named `lc_cell`; put `piece.lsl` + `builder_cell_onrez.lsl`
    inside it.
 2. Make a second prim (the rezzer); put `builder_rezzer.lsl` + the `lc_cell` object
-   inside it; position it at the board's northwest corner.
-3. Touch the rezzer → it rezzes 165 cell prims in a 15×11 grid, auto-named `cell_X_Y`.
-4. Select all 165 + the board root (root last), link, then run Workflow B step 3 to
-   finalize positions.
+   inside it; position it at the board's northwest corner (keep the whole board in-region).
+3. Touch the rezzer → it rezzes 165 cells, and each cell **self-positions and self-names**
+   `cell_X_Y` via `llSetRegionPos` (needed because `llRezObject` can't reach the far side).
+4. Select all 165 + the board root (root last) and **link** — the cells are already named
+   and placed, so **do not run `builder_layout`**. Reset Scripts, then add `game_controller.lsl`.
 
-**Workflow B — layout (positions/renames already-linked prims)**
+**Workflow B — manual layout (no rezzer)**
 1. Duplicate one flat prim to 165, link them all under the board root.
 2. Drop `builder_layout.lsl` into the root prim.
-3. Touch the root → it names and positions every child cell (one row per timer tick).
+3. Touch the root → it names and positions every child cell **by link order**.
 4. Remove `builder_layout.lsl`; drop in `game_controller.lsl`.
 
-`CELL_SIZE` defaults to `1.0`m (a 15×11m board) — keep it identical in both
-`builder_rezzer.lsl` and `builder_layout.lsl` if you change it.
+> ⚠️ `builder_layout.lsl` assigns names/positions by **link number**, so it must be the
+> *only* thing naming the cells. Never run it after the rezzer (Workflow A) — it will
+> overwrite the rezzer's correct `cell_X_Y` names with link-order ones and scramble the board.
+
+`CELL_SIZE` defaults to `1.0`m (a 15×11m board) — keep it identical across
+`builder_rezzer.lsl`, `builder_cell_onrez.lsl`, and `builder_layout.lsl` if you change it.
 
 ## Touch UV mapping
 

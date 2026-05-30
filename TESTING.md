@@ -15,7 +15,8 @@ effects, per-turn caps) are **not** active yet — see "Not yet implemented" bel
 | `piece.lsl` | every **cell** prim (×165) | rendering, touch, dialog |
 | `laser_fx.lsl` | one extra child prim (optional) | beam ribbon FX |
 | `ai_controller.lsl` | — | **do NOT use yet** (still the old ruleset; rewritten in Phase 4) |
-| `builder_rezzer.lsl`, `builder_cell_onrez.lsl`, `builder_layout.lsl` | build helpers | used once to make the board, then removed |
+| `builder_rezzer.lsl`, `builder_cell_onrez.lsl` | build helpers | rez + self-position the 165 cells |
+| `builder_layout.lsl` | (manual builds only) | **don't run with the rezzer** — it renames by link order |
 
 > ⚠️ Leave the AI **off** (it's off by default). The current `ai_controller.lsl`
 > predates the ALC rewrite and won't work — test as 2 players by clicking both
@@ -43,17 +44,21 @@ The board is **15 × 11 = 165 cells**. Easiest path uses the rezzer.
    (Cells must self-position because `llRezObject` can't reach the far side of the
    board ~18 m away; they relocate with `llSetRegionPos`.)
 
-### 1c. Make the board root + link
-1. Rez a flat prim for the **board base** (≈15 × 11 m). This becomes the **root**.
-2. Select **all 165 cells, then the board base last**, and **Link** (Ctrl+L).
-   The base must be the root (last selected).
-3. Drop **`builder_layout.lsl`** into the **root**, then **touch the root** — it names
-   and positions every cell relative to the root. Watch the hovertext for "complete".
-4. **Delete `builder_layout.lsl`** from the root.
-5. (Optional) delete the temporary rezzer prim.
+### 1c. Link to a board root
+The cells are **already named `cell_X_Y` and positioned** by step 1b.
+**Do NOT run `builder_layout.lsl`** here — it renames cells by their (arbitrary) link
+number and will scramble the board. Just link:
 
-> If you prefer to skip the rezzer: duplicate one flat cell prim to 165, link them
-> under the root, then do steps 3–4. `builder_layout.lsl` names them by link order.
+1. Rez a flat prim for the **board base**, positioned just under the cell grid. This
+   becomes the **root**.
+2. Select **all 165 cells, then the board base last**, and **Link** (Ctrl+L). The base
+   must be the root (last selected). Linking does **not** move the cells, and each cell
+   keeps its `cell_X_Y` name.
+3. (Optional) delete the temporary rezzer prim.
+
+> `builder_layout.lsl` is **only** for a manual build where cells have no names/positions
+> (it assigns both by link order). It is **not** used with the self-positioning rezzer —
+> running it after the rezzer is what scrambles the layout.
 
 ### 1d. Load the game scripts
 1. Drop **`game_controller.lsl`** into the **root** prim.
@@ -158,8 +163,12 @@ These arrive in **Phase 3**:
 - **Some cells stayed stacked at the NW corner**: those cells' target was outside the
   region, so `llSetRegionPos` refused to move them. Move the rezzer further from the
   region edge (the board needs ~15 m east and ~11 m south of the corner) and re-rez.
-- **Pieces blank / wrong squares**: a cell prim isn't named `cell_X_Y`, or `piece.lsl`
-  didn't re-read its name — Reset Scripts in Selection, or re-run `builder_layout.lsl`.
+- **Wrong piece at each square (names don't match positions)**: you ran
+  `builder_layout.lsl` after the rezzer — it renamed cells by arbitrary link number.
+  Recover by deleting the linkset and re-building **without** `builder_layout` (the
+  rezzer already names + positions the cells). See §1c.
+- **Pieces blank**: a cell prim isn't named `cell_X_Y`, or `piece.lsl` didn't re-read its
+  name — Reset Scripts in Selection.
 - **Nothing happens on touch**: make sure `game_controller.lsl` is in the **root** and
   every cell has `piece.lsl`.
 - **Board never paints**: the controller waits 1s on start then broadcasts; if you reset
