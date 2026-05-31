@@ -61,49 +61,55 @@ is a flat box lying horizontally and you use the top face.
 
 ## Piece colours
 
-Edit `piece.lsl` constants `COLOR_RED` / `COLOR_BLUE` to match your build palette.
+Edit `piece.lsl` constants `COLOR_RED` / `COLOR_GREEN` to match your build palette.
 
 ## Turning the AI on/off
 
-From any prim or external HUD, send:
+From any prim or external HUD, send on the config channel (num 100):
 ```lsl
-llMessageLinked(LINK_SET, 100, "AI_ON",   NULL_KEY);   // enable AI as Blue
-llMessageLinked(LINK_SET, 100, "AI_OFF",  NULL_KEY);   // 2-player mode
-llMessageLinked(LINK_SET, 100, "AI_BLUE", NULL_KEY);   // AI plays Blue (default)
-llMessageLinked(LINK_SET, 100, "AI_RED",  NULL_KEY);   // AI plays Red
-llMessageLinked(LINK_SET, 100, "RESET",   NULL_KEY);   // restart game
+llMessageLinked(LINK_SET, 100, "AI_ON",    NULL_KEY);   // enable the AI
+llMessageLinked(LINK_SET, 100, "AI_OFF",   NULL_KEY);   // 2-player mode
+llMessageLinked(LINK_SET, 100, "AI_GREEN", NULL_KEY);   // AI plays Green (default)
+llMessageLinked(LINK_SET, 100, "AI_RED",   NULL_KEY);   // AI plays Red
+llMessageLinked(LINK_SET, 100, "RESET",    NULL_KEY);   // restart game
 ```
 
 ## Swapping the AI
 
-Remove `ai_controller.lsl` from its prim and drop in a replacement script that:
+Remove `ai_controller.lsl` from its prim and drop in a replacement that:
 1. Listens for `link_message` with `num == 20` (LM_AI_REQUEST).
-2. Parses: `"boardCSV|player|actionsLeft"`.
-3. Responds with `llMessageLinked(LINK_ROOT, 21, moveStr, NULL_KEY)`.
+2. Parses `"boardCSV | player | actionsLeft | firedCSV | capturedCSV"`, where
+   `firedCSV`/`capturedCSV` are board indices (`y*15+x`) of pieces that already
+   fired / captured this turn.
+3. Responds (once per request) with `llMessageLinked(LINK_ROOT, 21, moveStr, NULL_KEY)`.
 
+The controller applies one action and re-requests until the AI's turn ends.
 Move string format:
-- `"FIRE"`
+- `"FIRE:x,y"` — fire the weapon at (x,y)
 - `"MOVE:fx,fy,tx,ty"`
-- `"ROTATE_CW:x,y"`
-- `"ROTATE_CCW:x,y"`
+- `"ROTATE_CW:x,y"` / `"ROTATE_CCW:x,y"`
+- `"PASS"` — skip the rest of the turn
+
+Players are **Red = 1**, **Green = 2**.
 
 ## Board encoding
 
-Cell integer = `type + owner*10 + orientation*100`
+Cell integer = `type + owner*100 + orient*1000 + stunned*10000 + bombDiag*100000`
 
-| Type | Value | Description |
-|------|-------|-------------|
-| Empty | 0 | — |
-| Laser | 1 | Laser cannon |
-| Deflector | 2 | Single 45° mirror |
-| Defender | 3 | Armoured mirror piece |
-| Switch | 4 | Double mirror |
-| King | 5 | Win target |
-| Splitter | 6 | Splits beam 90° |
-| Teleporter | 7 | Centre displacement device |
+| Type | Value | Type | Value |
+|------|-------|------|-------|
+| Empty | 0 | Hypergon | 7 |
+| King | 1 | Beam Splitter | 8 |
+| Laser | 2 | Partial-Mirrored Octagon | 9 |
+| Stunner | 3 | Fully-Mirrored Octagon | 10 |
+| One-Way Mirror | 4 | Hole | 11 |
+| Triangular Mirror | 5 | Hyper Hole | 12 |
+| Bomb | 6 | | |
 
-Owner: 0 = Red, 1 = Blue  
-Orientation: 0=N 1=E 2=S 3=W (direction the active face points)
+Owner: 0 = none, 1 = Red, 2 = Green.
+Orientation: 0–7 = N, NE, E, SE, S, SW, W, NW.
+`stunned` 0/1; `bombDiag` 0 = orthogonal `+`, 1 = diagonal `X`.
+See `ALC_DESIGN.md` for the full model and beam rules.
 
 ## Gameplay
 

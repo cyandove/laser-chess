@@ -1,277 +1,320 @@
 // ============================================================
 // Advanced Laser Chess — AI Controller (separate, swappable)
-// Place this script in any child prim of the board linkset.
-// Enable/disable via LM_CONFIG "AI_ON" / "AI_OFF".
+// Drop into any child prim of the board linkset. Enable via the CONFIG
+// channel ("AI_ON" / "AI_GREEN" etc. — see game_controller.lsl).
 //
-// This is a basic greedy AI:
-//   1. If firing wins the game, fire.
-//   2. If a rotation or move sets up an immediate win next action, do it.
-//   3. Otherwise pick a random legal action (move or rotation).
+// Protocol (one action per request):
+//   Receives LM_AI_REQUEST (num 20):
+//     "boardCSV | player | actionsLeft | firedCSV | capturedCSV"
+//   Replies LM_AI_RESPONSE (num 21) with ONE of:
+//     "FIRE:x,y" | "MOVE:fx,fy,tx,ty" | "ROTATE_CW:x,y"
+//     "ROTATE_CCW:x,y" | "PASS"
+//   The controller applies it (spending actions) and re-requests until
+//   the AI's turn ends.
 //
-// To replace this AI: remove this script and drop in a replacement
-// that listens for LM_AI_REQUEST and sends LM_AI_RESPONSE.
+// This is a greedy baseline: take a winning shot, else the best
+// destroying/stunning shot, else a capture, else advance toward the
+// enemy King, else rotate. Replace this script to drop in a stronger AI
+// that speaks the same protocol.
 // ============================================================
-
-// Match game_controller.lsl
-integer T_EMPTY   = 0;
-integer T_LASER   = 1;
-integer T_DEFLECT = 2;
-integer T_DEFEND  = 3;
-integer T_SWITCH  = 4;
-integer T_KING    = 5;
-integer T_SPLIT   = 6;
-integer T_TELE    = 7;
 
 integer BOARD_W = 15;
 integer BOARD_H = 11;
 
+// types
+integer T_EMPTY=0; integer T_KING=1; integer T_LASER=2; integer T_STUNNER=3;
+integer T_ONEWAY=4; integer T_TRIMIR=5; integer T_BOMB=6; integer T_HYPERGON=7;
+integer T_SPLITTER=8; integer T_POCT=9; integer T_FOCT=10; integer T_HOLE=11;
+integer T_HYPERHOLE=12;
+
 integer LM_AI_REQUEST  = 20;
 integer LM_AI_RESPONSE = 21;
 
-// ---- Board helpers (local copy) ----
-integer mkCell(integer t, integer o, integer r) { return t + o*10 + r*100; }
-integer cType(integer c)   { return c % 10; }
-integer cOwner(integer c)  { return (c/10) % 10; }
-integer cOrient(integer c) { return (c/100) % 10; }
+list DDX = [ 0, 1, 1, 1, 0,-1,-1,-1];
+list DDY = [-1,-1, 0, 1, 1, 1, 0,-1];
 
-integer bIdx(integer x, integer y) { return y * BOARD_W + x; }
-integer bGet(list board, integer x, integer y) { return llList2Integer(board, bIdx(x,y)); }
-list bSet(list board, integer x, integer y, integer v) {
-    return llListReplaceList(board, [v], bIdx(x,y), bIdx(x,y));
-}
+integer WIN_SCORE  =  1000000;
+integer LOSE_SCORE = -1000000;
+
+// ---- decode (must match game_controller.lsl) ----
+integer cType(integer c)   { return c % 100; }
+integer cOwner(integer c)  { return (c / 100) % 10; }
+integer cOrient(integer c) { return (c / 1000) % 10; }
+integer cStun(integer c)   { return (c / 10000) % 10; }
+
 integer bOk(integer x, integer y) { return x>=0 && x<BOARD_W && y>=0 && y<BOARD_H; }
+integer dirDX(integer o) { return llList2Integer(DDX, o); }
+integer dirDY(integer o) { return llList2Integer(DDY, o); }
+integer iabs(integer a) { if (a<0) return -a; return a; }
 
-// ---- Direction utilities ----
-integer dirDX(integer d) {
-    if (d==1) return  1;
-    if (d==3) return -1;
+integer bGetL(list b, integer x, integer y) { return llList2Integer(b, y*BOARD_W + x); }
+list    bSetL(list b, integer x, integer y, integer v) {
+    integer i = y*BOARD_W + x;
+    return llListReplaceList(b, [v], i, i);
+}
+
+integer pieceValue(integer t) {
+    if (t==T_KING)     return 1000;
+    if (t==T_LASER)    return 50;
+    if (t==T_STUNNER)  return 40;
+    if (t==T_BOMB)     return 35;
+    if (t==T_FOCT)     return 30;
+    if (t==T_POCT)     return 28;
+    if (t==T_HYPERGON) return 25;
+    if (t==T_SPLITTER) return 20;
+    if (t==T_ONEWAY)   return 12;
+    if (t==T_TRIMIR)   return 10;
     return 0;
 }
-integer dirDY(integer d) {
-    if (d==0) return -1;
-    if (d==2) return  1;
-    return 0;
-}
-integer oppDir(integer d) { return (d+2)%4; }
 
-integer reflectDeflect(integer fromDir, integer orient) {
-    if (orient==0 || orient==2) {
-        if (fromDir==0) return 1;
-        if (fromDir==1) return 0;
-        if (fromDir==2) return 3;
-        return 2;
+// ---- beam math (ported, deterministic subset) ----
+integer dirFromVec(integer dx, integer dy) {
+    integer i;
+    for (i=0; i<8; ++i)
+        if (llList2Integer(DDX,i)==dx && llList2Integer(DDY,i)==dy) return i;
+    return -1;
+}
+integer reflectOff(integer d, integer nrm) {
+    integer vx=dirDX(d); integer vy=dirDY(d);
+    integer nx=dirDX(nrm); integer ny=dirDY(nrm);
+    integer dot = vx*nx + vy*ny;
+    integer nn  = nx*nx + ny*ny;
+    integer f   = (2*dot) / nn;
+    return dirFromVec(vx - f*nx, vy - f*ny);
+}
+integer dotDir(integer d, integer nrm) {
+    return dirDX(d)*dirDX(nrm) + dirDY(d)*dirDY(nrm);
+}
+
+// What a beam travelling 'd' does at (x,y) of board b. Hypergon/bomb are
+// treated conservatively (absorb / plain hit) since the AI can't predict them.
+string interact(list b, integer x, integer y, integer d) {
+    integer cell = bGetL(b,x,y);
+    integer t = cType(cell);
+    integer o = cOrient(cell);
+    if (t==T_EMPTY)                       return "pass";
+    if (t==T_HOLE || t==T_HYPERHOLE)      return "absorb";
+    if (t==T_HYPERGON)                    return "absorb";
+    if (t==T_KING)                        return "king";
+    if (t==T_LASER || t==T_STUNNER)       return "hit";
+    if (t==T_BOMB)                        return "hit";
+    if (t==T_FOCT)                        return "reflect:" + (string)((d+4)%8);
+    if (t==T_POCT) {
+        integer face=(d+4)%8;
+        if (face==o || face==(o+1)%8 || face==(o+7)%8) return "reflect:" + (string)((d+4)%8);
+        return "hit";
     }
-    if (fromDir==0) return 3;
-    if (fromDir==3) return 0;
-    if (fromDir==2) return 1;
-    return 2;
+    if (t==T_ONEWAY) {
+        integer dt=dotDir(d,o);
+        if (dt>0) return "pass";
+        if (dt<0) return "reflect:" + (string)reflectOff(d,o);
+        return "hit";
+    }
+    if (t==T_SPLITTER) {
+        if (d==(o+4)%8) return "split:" + (string)((d+2)%8) + ":" + (string)((d+6)%8);
+        if (d==o) return "hit";
+        return "pass";
+    }
+    if (t==T_TRIMIR) {
+        integer dt=dotDir(d,o);
+        if (dt==0) return "pass";
+        if (dt>0)  return "hit";
+        return "reflect:" + (string)reflectOff(d,o);
+    }
+    return "absorb";
 }
 
-// ---- Simulate laser, return "king:P" or "" ----
-string simLaser(list board, integer player) {
-    integer lx=-1; integer ly=-1;
-    integer x; integer y;
-    for (y=0; y<BOARD_H && lx<0; ++y)
-        for (x=0; x<BOARD_W && lx<0; ++x) {
-            integer c = bGet(board,x,y);
-            if (cType(c)==T_LASER && cOwner(c)==player) { lx=x; ly=y; }
-        }
-    if (lx<0) return "";
-
-    list queue = [lx, ly, cOrient(bGet(board,lx,ly))];
+// Score firing the weapon at (wx,wy). WIN_SCORE if it kills the enemy King,
+// LOSE_SCORE if it would kill our own King; otherwise net value of enemy
+// pieces affected minus our own.
+integer simShot(list board, integer wx, integer wy, integer isStun, integer player) {
+    integer opp = 3 - player;
+    integer score = 0;
+    list b = board;
+    list queue = [wx, wy, cOrient(bGetL(b,wx,wy))];
     list visited = [];
-    integer maxSteps = 150;
+    integer steps = 300;
 
-    while (llGetListLength(queue)>=3 && maxSteps>0) {
-        --maxSteps;
-        integer cx   = llList2Integer(queue,0);
-        integer cy   = llList2Integer(queue,1);
-        integer cdir = llList2Integer(queue,2);
+    while (llGetListLength(queue) >= 3 && steps > 0) {
+        --steps;
+        integer cx = llList2Integer(queue,0);
+        integer cy = llList2Integer(queue,1);
+        integer cd = llList2Integer(queue,2);
         queue = llDeleteSubList(queue,0,2);
+        integer nx = cx + dirDX(cd);
+        integer ny = cy + dirDY(cd);
+        if (!bOk(nx,ny)) jump cont;
+        string vkey = (string)nx+","+(string)ny+","+(string)cd;
+        if (llListFindList(visited,[vkey])>=0) jump cont;
+        visited += [vkey];
 
-        integer nx = cx + dirDX(cdir);
-        integer ny = cy + dirDY(cdir);
-        if (!bOk(nx,ny)) jump simskip;
-
-        string key_ = (string)nx+","+(string)ny+","+(string)cdir;
-        if (llListFindList(visited,[key_])>=0) jump simskip;
-        visited += [key_];
-
-        integer cell = bGet(board,nx,ny);
-        integer t = cType(cell);
-        integer o = cOrient(cell);
-
-        if (t==T_EMPTY) { queue += [nx,ny,cdir]; jump simskip; }
-        if (t==T_KING)  return "king:" + (string)cOwner(cell);
-        if (t==T_LASER || t==T_TELE) jump simskip; // absorbed
-        if (t==T_DEFLECT) {
-            queue += [nx, ny, reflectDeflect(cdir, o)];
-            jump simskip;
+        string res = interact(b, nx, ny, cd);
+        if (res == "pass") {
+            queue = [nx,ny,cd] + queue;
+        } else if (llGetSubString(res,0,6) == "reflect") {
+            queue = [nx,ny,(integer)llGetSubString(res,8,-1)] + queue;
+        } else if (llGetSubString(res,0,4) == "split") {
+            list pp = llParseString2List(res,[":"],[]);
+            queue = [nx,ny,(integer)llList2String(pp,1), nx,ny,(integer)llList2String(pp,2)] + queue;
+        } else if (res == "king") {
+            integer ko = cOwner(bGetL(b,nx,ny));
+            if (!isStun) { if (ko==opp) return WIN_SCORE; return LOSE_SCORE; }
+            score += 5;     // stunning a King is mild
+        } else if (res == "hit") {
+            integer pc = bGetL(b,nx,ny);
+            integer pt = cType(pc);
+            integer po = cOwner(pc);
+            integer v  = pieceValue(pt);
+            if (isStun) {
+                if (pt==T_LASER || pt==T_STUNNER) { if (po==opp) score += v; else score -= v; }
+                else { if (po==opp) score += 2; else score -= 2; }
+            } else {
+                if (po==opp) score += v; else score -= v;
+            }
+            b = bSetL(b, nx, ny, 0);   // beam stops; remove for any later forks
         }
-        if (t==T_DEFEND) {
-            integer mirrorFace = oppDir(o);
-            if (cdir==mirrorFace) { queue += [nx,ny,reflectDeflect(cdir,o)]; jump simskip; }
-            jump simskip; // destroyed or absorbed — either way beam stops
-        }
-        if (t==T_SWITCH) {
-            integer nd;
-            if (cdir==0||cdir==2) nd=reflectDeflect(cdir,0);
-            else nd=reflectDeflect(cdir,1);
-            queue += [nx,ny,nd];
-            jump simskip;
-        }
-        if (t==T_SPLIT) {
-            queue += [nx,ny,cdir, nx,ny,(cdir+1)%4];
-            jump simskip;
-        }
-        @simskip;
+        // absorb -> branch ends
+        @cont;
     }
-    return "";
+    return score;
 }
 
-// ---- Collect all pieces belonging to player ----
-list playerPieces(list board, integer player) {
-    list pieces = [];
-    integer x; integer y;
-    for (y=0; y<BOARD_H; ++y)
-        for (x=0; x<BOARD_W; ++x) {
-            integer c = bGet(board,x,y);
-            if (cType(c)!=T_EMPTY && cOwner(c)==player) pieces += [x,y];
-        }
-    return pieces;
-}
-
-// ---- Build a list of all legal moves for player ----
-// Each entry is a string "CMD:params" ready to send as AI_RESPONSE
-list allMoves(list board, integer player) {
-    list moves = [];
-    list pieces = playerPieces(board, player);
-    list dd = [0,-1,1,0,0,1,-1,0];
+// ---- choose one action ----
+string chooseMove(list board, integer player, integer actionsLeft, list fired, list captured) {
+    integer opp = 3 - player;
     integer i;
-    for (i=0; i<llGetListLength(pieces); i+=2) {
-        integer px = llList2Integer(pieces,i);
-        integer py = llList2Integer(pieces,i+1);
-        // Rotations are always legal
-        moves += ["ROTATE_CW:"+(string)px+","+(string)py];
-        moves += ["ROTATE_CCW:"+(string)px+","+(string)py];
-        // Moves to adjacent empty cells
-        integer j;
-        for (j=0; j<8; j+=2) {
-            integer nx = px+llList2Integer(dd,j);
-            integer ny = py+llList2Integer(dd,j+1);
-            if (bOk(nx,ny) && bGet(board,nx,ny)==T_EMPTY)
-                moves += ["MOVE:"+(string)px+","+(string)py+","+(string)nx+","+(string)ny];
+    integer N = BOARD_W * BOARD_H;
+
+    // 1. Best shot (winning shot returns immediately).
+    string  bestFire = "";
+    integer bestFireScore = 0;
+    for (i=0; i<N; ++i) {
+        integer c = llList2Integer(board, i);
+        if (cOwner(c)==player && !cStun(c)) {
+            integer t = cType(c);
+            if ((t==T_LASER || t==T_STUNNER) && llListFindList(fired,[i])<0) {
+                integer x = i % BOARD_W;
+                integer y = i / BOARD_W;
+                integer s = simShot(board, x, y, (t==T_STUNNER), player);
+                if (s >= WIN_SCORE) return "FIRE:" + (string)x + "," + (string)y;
+                if (s > bestFireScore) {
+                    bestFireScore = s;
+                    bestFire = "FIRE:" + (string)x + "," + (string)y;
+                }
+            }
         }
     }
-    // Fire is always an option
-    moves += ["FIRE"];
-    return moves;
+    if (bestFire != "" && bestFireScore > 0) return bestFire;
+
+    // 2. Capture: a King/Octagon adjacent to an enemy piece (not capped).
+    string  bestCap = "";
+    integer bestCapVal = 0;
+    for (i=0; i<N; ++i) {
+        integer c = llList2Integer(board, i);
+        integer t = cType(c);
+        if (cOwner(c)==player && !cStun(c)
+            && (t==T_KING || t==T_POCT || t==T_FOCT)
+            && llListFindList(captured,[i])<0) {
+            integer x = i % BOARD_W;
+            integer y = i / BOARD_W;
+            integer o;
+            for (o=0; o<8; ++o) {
+                integer cost = 1; if (o % 2) cost = 2;
+                if (cost <= actionsLeft) {
+                    integer nx = x + dirDX(o);
+                    integer ny = y + dirDY(o);
+                    if (bOk(nx,ny)) {
+                        integer d = bGetL(board, nx, ny);
+                        integer dt = cType(d);
+                        if (dt!=T_EMPTY && dt!=T_HOLE && dt!=T_HYPERHOLE && cOwner(d)==opp) {
+                            integer v = pieceValue(dt);
+                            if (v > bestCapVal) {
+                                bestCapVal = v;
+                                bestCap = "MOVE:" + (string)x + "," + (string)y
+                                        + "," + (string)nx + "," + (string)ny;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (bestCap != "") return bestCap;
+
+    // 3. Advance an orthogonal step toward the enemy King.
+    integer kx = -1; integer ky = -1;
+    for (i=0; i<N && kx<0; ++i) {
+        integer c = llList2Integer(board, i);
+        if (cType(c)==T_KING && cOwner(c)==opp) { kx = i % BOARD_W; ky = i / BOARD_W; }
+    }
+    string  bestAdv = "";
+    integer bestGain = 0;
+    if (kx >= 0 && actionsLeft >= 1) {
+        for (i=0; i<N; ++i) {
+            integer c = llList2Integer(board, i);
+            if (cOwner(c)==player && !cStun(c) && cType(c)!=T_EMPTY) {
+                integer x = i % BOARD_W;
+                integer y = i / BOARD_W;
+                integer curD = iabs(x-kx) + iabs(y-ky);
+                integer o;
+                for (o=0; o<8; o+=2) {       // cardinal steps only (cost 1)
+                    integer nx = x + dirDX(o);
+                    integer ny = y + dirDY(o);
+                    if (bOk(nx,ny) && bGetL(board,nx,ny)==0) {
+                        integer gain = curD - (iabs(nx-kx) + iabs(ny-ky));
+                        if (gain > bestGain) {
+                            bestGain = gain;
+                            bestAdv = "MOVE:" + (string)x + "," + (string)y
+                                    + "," + (string)nx + "," + (string)ny;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (bestAdv != "") return bestAdv;
+
+    // 4. Rotate a random non-stunned piece (always legal).
+    list rotables;
+    for (i=0; i<N; ++i) {
+        integer c = llList2Integer(board, i);
+        if (cOwner(c)==player && !cStun(c) && cType(c)!=T_EMPTY) rotables += [i];
+    }
+    if (llGetListLength(rotables) > 0) {
+        integer pick = llList2Integer(rotables, (integer)llFrand(llGetListLength(rotables)));
+        integer px = pick % BOARD_W;
+        integer py = pick / BOARD_W;
+        if (llFrand(1.0) < 0.5) return "ROTATE_CW:"  + (string)px + "," + (string)py;
+        return "ROTATE_CCW:" + (string)px + "," + (string)py;
+    }
+
+    return "PASS";   // every piece stunned / no legal action
 }
 
-// ---- Apply a move to a board copy, return modified board ----
-list applyMove(list board, string move, integer player) {
-    list p = llParseString2List(move,[":"],[]);
-    string cmd = llList2String(p,0);
-    if (cmd=="FIRE") return board; // fire doesn't change board for simulation
-
-    list xy = llParseString2List(llList2String(p,1),[","],[]);
-    integer ax = llList2Integer(xy,0);
-    integer ay = llList2Integer(xy,1);
-
-    if (cmd=="MOVE") {
-        integer tx=llList2Integer(xy,2); integer ty=llList2Integer(xy,3);
-        integer cv=bGet(board,ax,ay);
-        board = bSet(board,tx,ty,cv);
-        board = bSet(board,ax,ay,0);
-    } else if (cmd=="ROTATE_CW") {
-        integer c=bGet(board,ax,ay);
-        board = bSet(board,ax,ay, mkCell(cType(c),cOwner(c),(cOrient(c)+1)%4));
-    } else if (cmd=="ROTATE_CCW") {
-        integer c=bGet(board,ax,ay);
-        board = bSet(board,ax,ay, mkCell(cType(c),cOwner(c),(cOrient(c)+3)%4));
-    }
-    return board;
-}
-
-// ---- Choose AI move ----
-// Returns an encoded move string ("FIRE", "MOVE:…", "ROTATE_CW:…", "ROTATE_CCW:…")
-string chooseMove(list board, integer player, integer actionsLeft) {
-    integer opponent = 1 - player;
-
-    // Priority 1: if firing wins right now, fire.
-    string fireRes = simLaser(board, player);
-    if (llGetSubString(fireRes,0,3)=="king") {
-        integer loser = (integer)llGetSubString(fireRes,5,-1);
-        if (loser==opponent) return "FIRE";
-    }
-
-    // Priority 2: try every move; if it leads to a winning fire, do it.
-    list moves = allMoves(board, player);
+list csvToInts(string s) {
+    if (s == "") return [];
+    list p = llParseString2List(s, [","], []);
+    list r = [];
     integer i;
-    for (i=0; i<llGetListLength(moves); ++i) {
-        string mv = llList2String(moves,i);
-        if (mv == "FIRE") jump skipFire;
-        list sim = applyMove(board, mv, player);
-        string res = simLaser(sim, player);
-        if (llGetSubString(res,0,3)=="king") {
-            integer loser = (integer)llGetSubString(res,5,-1);
-            if (loser==opponent) return mv;
-        }
-        @skipFire;
-    }
-
-    // Priority 3: avoid moves that let opponent win on their fire.
-    // Check current position first — if opponent can already fire-win, that's a
-    // pre-existing threat we can't escape without more analysis; skip for now.
-
-    // Priority 4: prefer moves; rotations are weaker positionally.
-    // Pick a random non-FIRE move with preference for MOVE over ROTATE.
-    list movesOnly = [];
-    list rotatesOnly = [];
-    for (i=0; i<llGetListLength(moves); ++i) {
-        string mv = llList2String(moves,i);
-        if (llGetSubString(mv,0,3)=="MOVE") movesOnly += [mv];
-        else if (llGetSubString(mv,0,5)=="ROTATE") rotatesOnly += [mv];
-    }
-
-    if (llGetListLength(movesOnly) > 0)
-        return llList2String(movesOnly, (integer)llFrand(llGetListLength(movesOnly)));
-    if (llGetListLength(rotatesOnly) > 0)
-        return llList2String(rotatesOnly, (integer)llFrand(llGetListLength(rotatesOnly)));
-
-    return "FIRE"; // last resort
+    for (i=0; i<llGetListLength(p); ++i) r += [(integer)llList2String(p,i)];
+    return r;
 }
 
-// ============================================================
-// MAIN
-// ============================================================
 default {
-    state_entry() {
-        // Nothing to do until game controller sends a request
-    }
+    state_entry() { }
 
-    link_message(integer sender_num, integer num, string str, key id) {
+    link_message(integer sender, integer num, string str, key id) {
         if (num != LM_AI_REQUEST) return;
 
-        // Parse: "boardCSV|player|actionsLeft"
         list parts = llParseString2List(str, ["|"], []);
-        list board  = llParseString2List(llList2String(parts,0), [","], []);
-        integer player      = (integer)llList2String(parts,1);
-        integer actionsLeft = (integer)llList2String(parts,2);
+        list board = csvToInts(llList2String(parts, 0));
+        integer player      = (integer)llList2String(parts, 1);
+        integer actionsLeft = (integer)llList2String(parts, 2);
+        list fired    = csvToInts(llList2String(parts, 3));
+        list captured = csvToInts(llList2String(parts, 4));
 
-        // Convert string list to integer list
-        list iBoard = [];
-        integer i;
-        for (i=0; i<llGetListLength(board); ++i)
-            iBoard += [(integer)llList2String(board,i)];
-
-        // Small delay so it doesn't feel instant
-        llSleep(0.8 + llFrand(0.7));
-
-        string move = chooseMove(iBoard, player, actionsLeft);
-        llMessageLinked(LINK_ROOT, LM_AI_RESPONSE, move, NULL_KEY);
-
-        // If the AI still has a second action and it just used its first,
-        // the controller will call us again via a new LM_AI_REQUEST after endAction().
+        llSleep(0.6 + llFrand(0.6));   // brief "thinking" pause
+        string mv = chooseMove(board, player, actionsLeft, fired, captured);
+        llMessageLinked(LINK_ROOT, LM_AI_RESPONSE, mv, NULL_KEY);
     }
 }

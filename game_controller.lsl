@@ -276,10 +276,13 @@ showDestinations() {
 announceTurn() {
     setStatus(playerName(gCurPlayer) + "'s turn — "
         + (string)gActionsLeft + " action(s) left.");
-    if (gAIEnabled && gCurPlayer == gAIPlayer) {
+    if (gAIEnabled && gCurPlayer == gAIPlayer && gState != GS_GAMEOVER) {
         string boardEnc = llDumpList2String(gBoard, ",");
+        string firedEnc = llDumpList2String(gFired, ",");
+        string capEnc   = llDumpList2String(gCaptured, ",");
         llMessageLinked(LINK_ALL_CHILDREN, LM_AI_REQUEST,
-            boardEnc + "|" + (string)gCurPlayer + "|" + (string)gActionsLeft, NULL_KEY);
+            boardEnc + "|" + (string)gCurPlayer + "|" + (string)gActionsLeft
+            + "|" + firedEnc + "|" + capEnc, NULL_KEY);
     }
 }
 
@@ -702,13 +705,16 @@ handleAction(string action) {
 applyAIMove(string move) {
     list p = llParseString2List(move, [":"], []);
     string cmd = llList2String(p, 0);
-    if (cmd == "FIRE") { return; } // Phase 2
+    if (cmd == "PASS") { spendActions(gActionsLeft); return; }  // skip remaining turn
 
     list xy = llParseString2List(llList2String(p,1), [","], []);
     integer ax = llList2Integer(xy,0);
     integer ay = llList2Integer(xy,1);
 
-    if (cmd == "MOVE") {
+    if (cmd == "FIRE") {
+        gSelX = ax; gSelY = ay;
+        doFire();
+    } else if (cmd == "MOVE") {
         integer tx = llList2Integer(xy,2);
         integer ty = llList2Integer(xy,3);
         integer cost = moveCost(ax, ay, tx, ty, gActionsLeft);
@@ -753,7 +759,11 @@ default {
         } else if (num == LM_AI_RESPONSE) {
             if (gAIEnabled && gCurPlayer == gAIPlayer) applyAIMove(str);
         } else if (num == LM_CONFIG) {
-            if (str == "AI_ON")        gAIEnabled = TRUE;
+            if (str == "AI_ON") {
+                gAIEnabled = TRUE;
+                // kick off immediately if it's already the AI's turn
+                if (gCurPlayer == gAIPlayer && gState != GS_GAMEOVER) announceTurn();
+            }
             else if (str == "AI_OFF")  gAIEnabled = FALSE;
             else if (str == "AI_RED")  gAIPlayer  = P_RED;
             else if (str == "AI_GREEN")gAIPlayer  = P_GREEN;
