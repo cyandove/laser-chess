@@ -29,6 +29,20 @@ integer T_HYPERHOLE=12;
 
 integer LM_AI_REQUEST  = 20;
 integer LM_AI_RESPONSE = 21;
+integer LM_CONFIG      = 100;
+
+integer P_RED   = 1;
+integer P_GREEN = 2;
+
+// mode acknowledgement (floating text over this prim)
+integer gEnabled = FALSE;
+integer gSide    = 2;   // P_GREEN by default
+
+showMode() {
+    if (!gEnabled) { llSetText("AI: OFF (2-player)", <0.65,0.65,0.65>, 1.0); return; }
+    if (gSide == P_RED) llSetText("AI: ON — playing Red", <1.0,0.35,0.35>, 1.0);
+    else                llSetText("AI: ON — playing Green", <0.35,1.0,0.4>, 1.0);
+}
 
 list DDX = [ 0, 1, 1, 1, 0,-1,-1,-1];
 list DDY = [-1,-1, 0, 1, 1, 1, 0,-1];
@@ -301,9 +315,20 @@ list csvToInts(string s) {
 }
 
 default {
-    state_entry() { }
+    state_entry() { showMode(); }
 
     link_message(integer sender, integer num, string str, key id) {
+        // Track the controller's config so this prim can show its mode.
+        if (num == LM_CONFIG) {
+            if (str == "AI_ON")         gEnabled = TRUE;
+            else if (str == "AI_OFF")   gEnabled = FALSE;
+            else if (str == "AI_RED")   gSide    = P_RED;
+            else if (str == "AI_GREEN") gSide    = P_GREEN;
+            else return;            // RESET etc. — not ours to display
+            showMode();
+            return;
+        }
+
         if (num != LM_AI_REQUEST) return;
 
         list parts = llParseString2List(str, ["|"], []);
@@ -313,8 +338,10 @@ default {
         list fired    = csvToInts(llList2String(parts, 3));
         list captured = csvToInts(llList2String(parts, 4));
 
+        llSetText("AI: thinking…", <1.0,1.0,0.4>, 1.0);
         llSleep(0.6 + llFrand(0.6));   // brief "thinking" pause
         string mv = chooseMove(board, player, actionsLeft, fired, captured);
         llMessageLinked(LINK_ROOT, LM_AI_RESPONSE, mv, NULL_KEY);
+        showMode();
     }
 }
