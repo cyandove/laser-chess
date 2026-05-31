@@ -76,6 +76,14 @@ integer gSelY;
 integer gAIEnabled;
 integer gAIPlayer;
 
+// Rotation-refund tracking (per turn): for each rotated piece, its board
+// index, its orientation when first rotated this turn, and how many rotation
+// actions have been charged. Returning a piece to its start orientation
+// refunds those actions. Cleared on any move and at end of turn.
+list    gRotIdx;
+list    gRotStart;
+list    gRotSpent;
+
 // ============================================================
 // ENCODING  cell = type + owner*100 + orient*1000 + stun*10000 + bombDiag*100000
 // ============================================================
@@ -273,8 +281,36 @@ spendActions(integer cost) {
         if (gCurPlayer == P_RED) gCurPlayer = P_GREEN;
         else gCurPlayer = P_RED;
         gActionsLeft = ACTIONS_PER_TURN;
+        gRotIdx = []; gRotStart = []; gRotSpent = [];   // reset rotation refunds
     }
     announceTurn();
+}
+
+// Rotate the piece at (x,y) by 'step' (+1 = CW, +7 = CCW). Returning a piece to
+// its start-of-turn orientation refunds the rotation actions spent on it.
+doRotate(integer x, integer y, integer step) {
+    integer cell = bGet(x, y);
+    integer startO = cOrient(cell);
+    integer newO = (startO + step) % 8;
+    bSet(x, y, mkCell(cType(cell), cOwner(cell), newO, cStun(cell), cBombDiag(cell)));
+    pushCell(x, y);
+
+    integer idx = bIdx(x, y);
+    integer p = llListFindList(gRotIdx, [idx]);
+    if (p < 0) {
+        gRotIdx   += [idx];
+        gRotStart += [startO];          // orientation before the first rotation
+        gRotSpent += [0];
+        p = llGetListLength(gRotIdx) - 1;
+    }
+    integer spent = llList2Integer(gRotSpent, p);
+    if (newO == llList2Integer(gRotStart, p)) {
+        gRotSpent = llListReplaceList(gRotSpent, [0], p, p);
+        spendActions(-spent);           // refund prior charges; this one is free
+    } else {
+        gRotSpent = llListReplaceList(gRotSpent, [spent + 1], p, p);
+        spendActions(1);
+    }
 }
 
 // ============================================================
@@ -459,6 +495,7 @@ doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
     bSet(fx, fy, 0);
     pushCell(fx, fy);
     pushCell(tx, ty);
+    gRotIdx = []; gRotStart = []; gRotSpent = [];   // a move resets rotation refunds
     if (cType(captured) == T_KING) {
         integer winner = cOwner(mv);
         setStatus(playerName(winner) + " WINS by capture! Touch the board to restart.");
@@ -507,7 +544,6 @@ handleTouch(integer x, integer y) {
 
 handleAction(string action) {
     if (gSelX < 0 || gState == GS_GAMEOVER) return;
-    integer c = bGet(gSelX, gSelY);
 
     if (action == "MOVE") {
         gState = GS_AWAIT_DST;
@@ -516,16 +552,10 @@ handleAction(string action) {
         setStatus("Click a highlighted square. (diagonal = 2 actions)");
 
     } else if (action == "ROTATE_CW") {
-        bSet(gSelX, gSelY,
-            mkCell(cType(c), cOwner(c), (cOrient(c)+1)%8, cStun(c), cBombDiag(c)));
-        pushCell(gSelX, gSelY);
-        spendActions(1);
+        doRotate(gSelX, gSelY, 1);
 
     } else if (action == "ROTATE_CCW") {
-        bSet(gSelX, gSelY,
-            mkCell(cType(c), cOwner(c), (cOrient(c)+7)%8, cStun(c), cBombDiag(c)));
-        pushCell(gSelX, gSelY);
-        spendActions(1);
+        doRotate(gSelX, gSelY, 7);
 
     } else if (action == "FIRE") {
         doFire();
@@ -547,7 +577,6 @@ applyAIMove(string move) {
     list xy = llParseString2List(llList2String(p,1), [","], []);
     integer ax = llList2Integer(xy,0);
     integer ay = llList2Integer(xy,1);
-    integer c = bGet(ax, ay);
 
     if (cmd == "MOVE") {
         integer tx = llList2Integer(xy,2);
@@ -556,15 +585,9 @@ applyAIMove(string move) {
         if (cost < 1) cost = 1;
         doMove(ax, ay, tx, ty, cost);
     } else if (cmd == "ROTATE_CW") {
-        bSet(ax, ay, mkCell(cType(c),cOwner(c),(cOrient(c)+1)%8,cStun(c),cBombDiag(c)));
-        pushCell(ax, ay);
-        gSelX = ax; gSelY = ay;
-        spendActions(1);
+        doRotate(ax, ay, 1);
     } else if (cmd == "ROTATE_CCW") {
-        bSet(ax, ay, mkCell(cType(c),cOwner(c),(cOrient(c)+7)%8,cStun(c),cBombDiag(c)));
-        pushCell(ax, ay);
-        gSelX = ax; gSelY = ay;
-        spendActions(1);
+        doRotate(ax, ay, 7);
     }
 }
 

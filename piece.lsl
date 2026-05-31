@@ -52,6 +52,7 @@ key     gLastToucher = NULL_KEY;
 integer cType(integer c)   { return c % 100; }
 integer cOwner(integer c)  { return (c / 100) % 10; }
 integer cOrient(integer c) { return (c / 1000) % 10; }
+integer cStun(integer c)   { return (c / 10000) % 10; }
 integer cBombDiag(integer c){ return (c / 100000) % 10; }
 
 parsePosition() {
@@ -94,26 +95,40 @@ updateVisuals(integer cell) {
     integer t = cType(cell);
     integer owner = cOwner(cell);
 
+    // Base appearance for the piece (or empty cell).
+    vector col = COLOR_EMPTY;
+    float  a   = 0.3;
+    string label = "";
+    if (t != T_EMPTY) {
+        a = 1.0;
+        if (owner == P_RED)        col = COLOR_RED;
+        else if (owner == P_GREEN) col = COLOR_GREEN;
+        else                       col = COLOR_NEUTRAL;
+        label = pieceLabel(cell);
+        if (cStun(cell)) label += "\n~STUN~";
+    }
+
+    // Highlight a legal destination with glow (so an occupied capture target
+    // still shows the enemy piece's colour + label underneath). Empty targets
+    // turn yellow so they're visible on the dark board.
+    float glow = 0.0;
     if (gHighlighted) {
-        llSetColor(COLOR_HIGHLIGHT, ALL_SIDES);
-        llSetAlpha(1.0, ALL_SIDES);
-        llSetText("", <1,1,1>, 0.0);
-        return;
+        glow = 0.25;
+        if (t == T_EMPTY) { col = COLOR_HIGHLIGHT; a = 1.0; }
     }
-    if (t == T_EMPTY) {
-        llSetColor(COLOR_EMPTY, ALL_SIDES);
-        llSetAlpha(0.3, ALL_SIDES);
-        llSetText("", <1,1,1>, 0.0);
-        return;
-    }
-    llSetAlpha(1.0, ALL_SIDES);
-    if (owner == P_RED)        llSetColor(COLOR_RED, ALL_SIDES);
-    else if (owner == P_GREEN) llSetColor(COLOR_GREEN, ALL_SIDES);
-    else                       llSetColor(COLOR_NEUTRAL, ALL_SIDES);
-    llSetText(pieceLabel(cell), <1,1,1>, 1.0);
+
+    // One batched call is cheaper than separate color/alpha/glow/text calls.
+    llSetLinkPrimitiveParamsFast(LINK_THIS, [
+        PRIM_COLOR, ALL_SIDES, col, a,
+        PRIM_GLOW,  ALL_SIDES, glow,
+        PRIM_TEXT,  label, <1,1,1>, 1.0 ]);
 }
 
-setHighlight(integer on) { gHighlighted = on; updateVisuals(gCurrentCell); }
+setHighlight(integer on) {
+    if (gHighlighted == on) return;   // skip redundant updates (most cells)
+    gHighlighted = on;
+    updateVisuals(gCurrentCell);
+}
 
 flashLaserHit() {
     llSetColor(COLOR_LASER_HIT, ALL_SIDES);
