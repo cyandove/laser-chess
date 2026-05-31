@@ -16,6 +16,10 @@
 integer BOARD_W = 15;
 integer BOARD_H = 11;
 
+// Physical layout (used to auto-arrange cell prims by name on start).
+float CELL_SIZE = 1.0;   // metres per cell — match your build
+float CELL_ZOFF = 0.05;  // cell lift above the root face (local Z)
+
 // ---- Piece types ----
 integer T_EMPTY     = 0;
 integer T_KING      = 1;
@@ -118,6 +122,30 @@ broadcastBoard() {
     for (y=0; y<BOARD_H; ++y)
         for (x=0; x<BOARD_W; ++x)
             if (bGet(x,y)) pushCell(x, y);
+}
+
+// Arrange every `cell_X_Y` child to its grid slot by NAME, relative to the
+// root, using PRIM_POS_LOCAL. This is link-order-proof: it doesn't matter how
+// or where the cells were rezzed/linked, only that they are named correctly.
+// col -> local +X (east), row -> local +Y at row 0 (north), centered on root.
+layoutCells() {
+    float halfW = (float)(BOARD_W - 1) * 0.5 * CELL_SIZE;
+    float halfH = (float)(BOARD_H - 1) * 0.5 * CELL_SIZE;
+    integer n = llGetNumberOfPrims();
+    integer i;
+    for (i = 2; i <= n; ++i) {
+        string nm = llGetLinkName(i);
+        if (llGetSubString(nm, 0, 4) == "cell_") {
+            list parts = llParseString2List(nm, ["_"], []);
+            integer col = (integer)llList2String(parts, 1);
+            integer row = (integer)llList2String(parts, 2);
+            float lx = (float)col * CELL_SIZE - halfW;
+            float ly = halfH - (float)row * CELL_SIZE;
+            llSetLinkPrimitiveParamsFast(i, [
+                PRIM_POS_LOCAL, <lx, ly, CELL_ZOFF>,
+                PRIM_ROT_LOCAL, ZERO_ROTATION ]);
+        }
+    }
 }
 
 // ============================================================
@@ -551,6 +579,7 @@ default {
         gSelX = -1; gSelY = -1;
         initBoard();
         llSleep(1.0);
+        layoutCells();      // arrange cells by name (fixes any link-order scramble)
         broadcastBoard();
         announceTurn();
     }
