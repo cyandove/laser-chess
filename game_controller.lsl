@@ -1,53 +1,73 @@
 // ============================================================
-// Advanced Laser Chess — Game Controller
-// Root prim of the board linkset.
-// Child prims run piece.lsl; communicate via llMessageLinked.
-// Board: 15 wide (x) × 11 tall (y), y=0 = north (Blue), y=10 = south (Red).
+// Advanced Laser Chess — Game Controller  (ALC rewrite, Phase 3)
+// Root prim of the board linkset. Children run piece.lsl.
+//
+// Done: cell model (12 types, 8 orientations), full ALC starting board,
+// rendering + auto-layout, 3 actions/turn, orthogonal move (diagonal costs 2),
+// 45-degree rotation w/ refund-on-return, capture-by-moving (King + Octagons),
+// 8-direction beam physics (Laser destroys / Stunner stuns), Bomb blast
+// (center vs side), stun enforcement + per-turn thaw, Hyper Hole displacement,
+// and once-per-turn caps on firing and capturing.
+// Hole is impassable; "removal on entry" only via displacement (avoided here).
+//
+// Board: 15 wide (x 0-14, W->E) x 11 tall (y 0-10, N->S).
+// Red = cols 0-2 (west), Green = cols 12-14 (east). See ALC_DESIGN.md.
 // ============================================================
 
 integer BOARD_W = 15;
 integer BOARD_H = 11;
 
-// Piece types
-integer T_EMPTY   = 0;
-integer T_LASER   = 1;
-integer T_DEFLECT = 2;
-integer T_DEFEND  = 3;
-integer T_SWITCH  = 4;
-integer T_KING    = 5;
-integer T_SPLIT   = 6;
-integer T_TELE    = 7;
+// Physical layout (used to auto-arrange cell prims by name on start).
+float CELL_SIZE = 1.0;   // metres per cell — match your build
+float CELL_ZOFF = 0.05;  // cell lift above the root face (local Z)
 
-// Players
-integer P_RED  = 0;
-integer P_BLUE = 1;
+// ---- Piece types ----
+integer T_EMPTY     = 0;
+integer T_KING      = 1;
+integer T_LASER     = 2;
+integer T_STUNNER   = 3;
+integer T_ONEWAY    = 4;
+integer T_TRIMIR    = 5;
+integer T_BOMB      = 6;
+integer T_HYPERGON  = 7;
+integer T_SPLITTER  = 8;
+integer T_POCT      = 9;   // partially-mirrored octagon
+integer T_FOCT      = 10;  // fully-mirrored octagon
+integer T_HOLE      = 11;
+integer T_HYPERHOLE = 12;
 
-// Orientations — direction piece's active/mirror face points
-integer O_NORTH = 0;
-integer O_EAST  = 1;
-integer O_SOUTH = 2;
-integer O_WEST  = 3;
+// ---- Owners ----
+integer O_NONE = 0;
+integer P_RED  = 1;
+integer P_GREEN= 2;
 
-// llMessageLinked num codes
-integer LM_CELL_UPDATE = 1;  // str "x,y,cell"
-integer LM_HIGHLIGHT   = 2;  // str "x,y,1" or "x,y,0"
+// ---- Orientations (0..7 CW from north): N NE E SE S SW W NW ----
+// dx/dy lookup
+list DDX = [ 0, 1, 1, 1, 0,-1,-1,-1];
+list DDY = [-1,-1, 0, 1, 1, 1, 0,-1];
+
+// ---- link-message nums ----
+integer LM_CELL_UPDATE = 1;
+integer LM_HIGHLIGHT   = 2;
 integer LM_CLEAR_HL    = 3;
-integer LM_LASER_PATH  = 4;  // str "x0,y0;x1,y1;…"
-integer LM_GAME_OVER   = 5;  // str "0" or "1" (winner)
-integer LM_STATUS      = 6;  // str status text
-integer LM_PIECE_TOUCH = 10; // from child: str "x,y"
-integer LM_ACTION      = 11; // from child: str action name
-integer LM_AI_REQUEST  = 20; // to AI script: str board|player|actionsLeft
-integer LM_AI_RESPONSE = 21; // from AI: str move encoding
-integer LM_CONFIG      = 100;// str "RESET","AI_ON","AI_OFF","AI_PLAYER:0/1"
+integer LM_LASER_PATH  = 4;
+integer LM_GAME_OVER   = 5;
+integer LM_STATUS      = 6;
+integer LM_PIECE_TOUCH = 10;
+integer LM_ACTION      = 11;
+integer LM_AI_REQUEST  = 20;
+integer LM_AI_RESPONSE = 21;
+integer LM_CONFIG      = 100;
 
-// Game FSM
-integer GS_IDLE      = 0;
-integer GS_SELECTED  = 1;
-integer GS_AWAIT_DST = 2;
-integer GS_GAMEOVER  = 3;
+// ---- FSM ----
+integer GS_IDLE     = 0;
+integer GS_SELECTED = 1;
+integer GS_AWAIT_DST= 2;
+integer GS_GAMEOVER = 3;
 
-// ---- Global state ----
+integer ACTIONS_PER_TURN = 3;
+
+// ---- state ----
 list    gBoard;
 integer gCurPlayer;
 integer gActionsLeft;
@@ -57,13 +77,31 @@ integer gSelY;
 integer gAIEnabled;
 integer gAIPlayer;
 
+// Rotation-refund tracking (per turn): for each rotated piece, its board
+// index, its orientation when first rotated this turn, and how many rotation
+// actions have been charged. Returning a piece to its start orientation
+// refunds those actions. Cleared on any move and at end of turn.
+list    gRotIdx;
+list    gRotStart;
+list    gRotSpent;
+
+// Per-turn caps: board indices of pieces that have fired / captured this turn.
+list    gFired;
+list    gCaptured;
+
+float   THAW_CHANCE = 0.34;   // per-turn chance a stunned piece recovers
+
 // ============================================================
-// ENCODING  cell = type + owner*10 + orient*100
+// ENCODING  cell = type + owner*100 + orient*1000 + stun*10000 + bombDiag*100000
 // ============================================================
-integer mkCell(integer t, integer o, integer r) { return t + o*10 + r*100; }
-integer cType(integer c)   { return c % 10; }
-integer cOwner(integer c)  { return (c / 10) % 10; }
-integer cOrient(integer c) { return (c / 100) % 10; }
+integer mkCell(integer t, integer ownr, integer o, integer stun, integer bombDiag) {
+    return t + ownr*100 + o*1000 + stun*10000 + bombDiag*100000;
+}
+integer cType(integer c)   { return c % 100; }
+integer cOwner(integer c)  { return (c / 100) % 10; }
+integer cOrient(integer c) { return (c / 1000) % 10; }
+integer cStun(integer c)   { return (c / 10000) % 10; }
+integer cBombDiag(integer c){ return (c / 100000) % 10; }
 
 // ============================================================
 // BOARD ACCESS
@@ -74,6 +112,9 @@ bSet(integer x, integer y, integer v) {
     gBoard = llListReplaceList(gBoard, [v], bIdx(x,y), bIdx(x,y));
 }
 integer bOk(integer x, integer y) { return x>=0 && x<BOARD_W && y>=0 && y<BOARD_H; }
+
+integer dirDX(integer o) { return llList2Integer(DDX, o); }
+integer dirDY(integer o) { return llList2Integer(DDY, o); }
 
 // ============================================================
 // MESSAGING
@@ -98,279 +139,509 @@ broadcastBoard() {
             if (bGet(x,y)) pushCell(x, y);
 }
 
+// Arrange every `cell_X_Y` child to its grid slot by NAME, relative to the
+// root, using PRIM_POS_LOCAL. This is link-order-proof: it doesn't matter how
+// or where the cells were rezzed/linked, only that they are named correctly.
+// col -> local +X (east), row -> local +Y at row 0 (north), centered on root.
+layoutCells() {
+    float halfW = (float)(BOARD_W - 1) * 0.5 * CELL_SIZE;
+    float halfH = (float)(BOARD_H - 1) * 0.5 * CELL_SIZE;
+    integer n = llGetNumberOfPrims();
+    integer i;
+    for (i = 2; i <= n; ++i) {
+        string nm = llGetLinkName(i);
+        if (llGetSubString(nm, 0, 4) == "cell_") {
+            list parts = llParseString2List(nm, ["_"], []);
+            integer col = (integer)llList2String(parts, 1);
+            integer row = (integer)llList2String(parts, 2);
+            float lx = (float)col * CELL_SIZE - halfW;
+            float ly = halfH - (float)row * CELL_SIZE;
+            llSetLinkPrimitiveParamsFast(i, [
+                PRIM_POS_LOCAL, <lx, ly, CELL_ZOFF>,
+                PRIM_ROT_LOCAL, ZERO_ROTATION ]);
+        }
+    }
+}
+
 // ============================================================
-// INITIAL BOARD LAYOUT
-// Red  (P_RED=0)  — south, rows 9-10
-// Blue (P_BLUE=1) — north, rows 0-1
-// Symmetric across horizontal midline (y=5)
-// Teleporter at centre (7,5)
+// SETUP — place a Red piece and its 180-degree Green counterpart.
 // ============================================================
+placePair(integer x, integer y, integer t, integer o, integer bombDiag) {
+    bSet(x, y, mkCell(t, P_RED, o, 0, bombDiag));
+    integer gx = (BOARD_W-1) - x;
+    integer gy = (BOARD_H-1) - y;
+    integer go = (o + 4) % 8;
+    bSet(gx, gy, mkCell(t, P_GREEN, go, 0, bombDiag));
+}
+neutral(integer x, integer y, integer t) {
+    bSet(x, y, mkCell(t, O_NONE, 0, 0, 0));
+}
+
 initBoard() {
     gBoard = [];
     integer i;
     for (i=0; i<BOARD_W*BOARD_H; ++i) gBoard += [0];
 
-    // Red — south
-    bSet( 0,10, mkCell(T_LASER,  P_RED, O_NORTH));
-    bSet( 7,10, mkCell(T_KING,   P_RED, O_NORTH));
-    bSet( 2,10, mkCell(T_DEFLECT,P_RED, O_NORTH));
-    bSet( 4,10, mkCell(T_DEFLECT,P_RED, O_EAST ));
-    bSet(10,10, mkCell(T_DEFLECT,P_RED, O_NORTH));
-    bSet(12,10, mkCell(T_DEFLECT,P_RED, O_WEST ));
-    bSet( 5,10, mkCell(T_DEFEND, P_RED, O_NORTH));
-    bSet( 9,10, mkCell(T_DEFEND, P_RED, O_NORTH));
-    bSet( 3, 9, mkCell(T_DEFLECT,P_RED, O_EAST ));
-    bSet(11, 9, mkCell(T_DEFLECT,P_RED, O_WEST ));
-    bSet( 6, 9, mkCell(T_SWITCH, P_RED, O_NORTH));
-    bSet( 8, 9, mkCell(T_SWITCH, P_RED, O_NORTH));
-    bSet( 7, 9, mkCell(T_SPLIT,  P_RED, O_NORTH));
+    // --- Red back column (x=0) ---
+    placePair(0, 0,  T_ONEWAY,   2, 0);   // Oe
+    placePair(0, 1,  T_TRIMIR,   2, 0);   // Te  (cardinal -> flat mirror)
+    placePair(0, 2,  T_BOMB,     0, 0);   // Bo  (orthogonal)
+    placePair(0, 3,  T_STUNNER,  6, 0);   // Sw
+    placePair(0, 4,  T_LASER,    2, 0);   // Le
+    placePair(0, 5,  T_KING,     0, 0);   // K
+    placePair(0, 6,  T_LASER,    2, 0);   // Le
+    placePair(0, 7,  T_STUNNER,  6, 0);   // Sw
+    placePair(0, 8,  T_BOMB,     0, 0);   // Bo
+    placePair(0, 9,  T_TRIMIR,   2, 0);   // Te
+    placePair(0, 10, T_ONEWAY,   2, 0);   // Oe
 
-    // Blue — north (mirrored)
-    bSet(14, 0, mkCell(T_LASER,  P_BLUE, O_SOUTH));
-    bSet( 7, 0, mkCell(T_KING,   P_BLUE, O_SOUTH));
-    bSet(12, 0, mkCell(T_DEFLECT,P_BLUE, O_SOUTH));
-    bSet(10, 0, mkCell(T_DEFLECT,P_BLUE, O_WEST ));
-    bSet( 4, 0, mkCell(T_DEFLECT,P_BLUE, O_SOUTH));
-    bSet( 2, 0, mkCell(T_DEFLECT,P_BLUE, O_EAST ));
-    bSet( 5, 0, mkCell(T_DEFEND, P_BLUE, O_SOUTH));
-    bSet( 9, 0, mkCell(T_DEFEND, P_BLUE, O_SOUTH));
-    bSet(11, 1, mkCell(T_DEFLECT,P_BLUE, O_WEST ));
-    bSet( 3, 1, mkCell(T_DEFLECT,P_BLUE, O_EAST ));
-    bSet( 6, 1, mkCell(T_SWITCH, P_BLUE, O_SOUTH));
-    bSet( 8, 1, mkCell(T_SWITCH, P_BLUE, O_SOUTH));
-    bSet( 7, 1, mkCell(T_SPLIT,  P_BLUE, O_SOUTH));
+    // --- Red middle column (x=1) ---
+    placePair(1, 0,  T_TRIMIR,   3, 0);   // Tse (diagonal -> deflector)
+    placePair(1, 1,  T_TRIMIR,   0, 0);   // Tn
+    placePair(1, 2,  T_ONEWAY,   2, 0);   // Oe
+    placePair(1, 3,  T_HYPERGON, 0, 0);   // H
+    placePair(1, 4,  T_SPLITTER, 6, 0);   // Pw
+    placePair(1, 5,  T_STUNNER,  6, 0);   // Sw
+    placePair(1, 6,  T_SPLITTER, 6, 0);   // Pw
+    placePair(1, 7,  T_HYPERGON, 0, 0);   // H
+    placePair(1, 8,  T_ONEWAY,   2, 0);   // Oe
+    placePair(1, 9,  T_TRIMIR,   4, 0);   // Ts
+    placePair(1, 10, T_TRIMIR,   1, 0);   // Tne
 
-    // Neutral teleporter at centre
-    bSet(7, 5, mkCell(T_TELE, P_RED, O_NORTH));
+    // --- Red front column (x=2): 4 partial octagons + 1 full (centre) ---
+    placePair(2, 3,  T_POCT,     2, 0);   // me (shield ne/e/se)
+    placePair(2, 4,  T_POCT,     2, 0);
+    placePair(2, 5,  T_FOCT,     0, 0);   // M  (fully mirrored)
+    placePair(2, 6,  T_POCT,     2, 0);
+    placePair(2, 7,  T_POCT,     2, 0);
+
+    // --- Neutral centre features (column x=7) ---
+    neutral(7, 1, T_HOLE);
+    neutral(7, 3, T_HOLE);
+    neutral(7, 5, T_HYPERHOLE);
+    neutral(7, 7, T_HOLE);
+    neutral(7, 9, T_HOLE);
 }
 
 // ============================================================
-// DIRECTION UTILITIES
+// CAPTURE / MOVEMENT RULES
 // ============================================================
-integer dirDX(integer d) {
-    if (d==O_EAST)  return  1;
-    if (d==O_WEST)  return -1;
-    return 0;
+integer canCapture(integer t) {
+    return (t == T_KING || t == T_POCT || t == T_FOCT);
 }
-integer dirDY(integer d) {
-    if (d==O_NORTH) return -1;
-    if (d==O_SOUTH) return  1;
-    return 0;
+// Pieces that can never be moved/rotated (board features)
+integer isFeature(integer t) {
+    return (t == T_HOLE || t == T_HYPERHOLE);
 }
-integer oppDir(integer d) { return (d+2)%4; }
+string playerName(integer p) { if (p==P_RED) return "Red"; return "Green"; }
 
-// Deflector "/" reflection (orient N or S) or "\" (orient E or W)
-integer reflectDeflect(integer fromDir, integer orient) {
-    if (orient==O_NORTH || orient==O_SOUTH) {
-        // "/" mirror: N↔E, S↔W
-        if (fromDir==O_NORTH) return O_EAST;
-        if (fromDir==O_EAST)  return O_NORTH;
-        if (fromDir==O_SOUTH) return O_WEST;
-        return O_SOUTH;
+// cost of a step to (nx,ny) from selected piece; -1 if illegal given actionsLeft
+integer moveCost(integer fx, integer fy, integer nx, integer ny, integer actionsLeft) {
+    if (!bOk(nx,ny)) return -1;
+    integer adx = nx - fx; if (adx<0) adx = -adx;
+    integer ady = ny - fy; if (ady<0) ady = -ady;
+    integer cost;
+    if (adx+ady == 1) cost = 1;          // orthogonal
+    else if (adx==1 && ady==1) cost = 2; // diagonal
+    else return -1;                      // not a single step
+    if (cost > actionsLeft) return -1;
+
+    integer dst = bGet(nx,ny);
+    integer dt = cType(dst);
+    if (dt == T_EMPTY) return cost;
+    if (dt == T_HYPERHOLE) return cost;  // enterable: displaces the mover
+    if (isFeature(dt)) return -1;        // Hole is impassable
+    // occupied: only a capture by an enemy-capturing mover, once per turn
+    integer mover = bGet(fx,fy);
+    if (cOwner(dst) != cOwner(mover) && canCapture(cType(mover))) {
+        if (llListFindList(gCaptured, [bIdx(fx,fy)]) >= 0) return -1; // already captured
+        return cost;
     }
-    // "\" mirror: N↔W, S↔E
-    if (fromDir==O_NORTH) return O_WEST;
-    if (fromDir==O_WEST)  return O_NORTH;
-    if (fromDir==O_SOUTH) return O_EAST;
-    return O_SOUTH;
-}
-
-// ============================================================
-// LASER INTERACTION
-// Returns encoded result string:
-//   "pass"            — empty cell (beam continues same dir)
-//   "reflect:D"       — beam turns to direction D
-//   "split:D1:D2"     — beam forks into D1 and D2
-//   "absorb"          — beam stops, piece survives
-//   "destroy:x,y"     — piece removed, beam stops
-//   "king:P"          — king of player P hit → game over
-// ============================================================
-string laserInteract(integer x, integer y, integer fromDir) {
-    integer cell = bGet(x, y);
-    integer t = cType(cell);
-    integer o = cOrient(cell);
-
-    if (t == T_EMPTY) return "pass";
-
-    if (t == T_KING)   return "king:" + (string)cOwner(cell);
-    if (t == T_LASER)  return "destroy:" + (string)x + "," + (string)y;
-    if (t == T_TELE)   return "absorb"; // beam absorbed by teleporter
-
-    if (t == T_DEFLECT) return "reflect:" + (string)reflectDeflect(fromDir, o);
-
-    if (t == T_DEFEND) {
-        // Mirror face on side opposite to orient (the "back").
-        // Hit back face → reflect. Hit front face → destroy. Sides → absorb.
-        integer mirrorFace = oppDir(o);
-        if (fromDir == mirrorFace) return "reflect:" + (string)reflectDeflect(fromDir, o);
-        if (fromDir == o)          return "destroy:" + (string)x + "," + (string)y;
-        return "absorb";
-    }
-
-    if (t == T_SWITCH) {
-        // Double mirror: always reflects. Uses "/" when fromDir is N or S, "\" otherwise.
-        integer newDir;
-        if (fromDir==O_NORTH || fromDir==O_SOUTH)
-            newDir = reflectDeflect(fromDir, O_NORTH); // "/"
-        else
-            newDir = reflectDeflect(fromDir, O_EAST);  // "\"
-        return "reflect:" + (string)newDir;
-    }
-
-    if (t == T_SPLIT) {
-        // Passes straight through AND deflects 90° CW
-        integer deflected = (fromDir+1)%4;
-        return "split:" + (string)fromDir + ":" + (string)deflected;
-    }
-
-    return "absorb";
+    return -1;
 }
 
-// ============================================================
-// LASER TRACE
-// Fires the current player's laser, handles all interactions.
-// Returns "" on no capture, "king:P" on king hit.
-// ============================================================
-string fireLaser(integer player) {
-    // Locate laser
-    integer lx = -1; integer ly = -1;
-    integer x; integer y;
-    for (y=0; y<BOARD_H && lx<0; ++y)
-        for (x=0; x<BOARD_W && lx<0; ++x) {
-            integer c = bGet(x,y);
-            if (cType(c)==T_LASER && cOwner(c)==player) { lx=x; ly=y; }
-        }
-    if (lx < 0) return "";
-
-    string path = (string)lx+","+(string)ly;
-    string gameResult = "";
-
-    // Beam-front stack: groups of 3 ints [x, y, dir, …].
-    // Processed DFS (pop the front, PREPEND new fronts) so each fork is
-    // traced to its end before the next one starts. This keeps split
-    // branches contiguous in `path`, letting laser_fx render them without
-    // zig-zagging between forks. Game outcome is identical to BFS — the
-    // same cells are visited and the same pieces hit, just in a different
-    // order.
-    list queue = [lx, ly, cOrient(bGet(lx,ly))];
-    list visited = [];
-    integer maxSteps = 200; // guard against infinite loops
-
-    while (llGetListLength(queue) >= 3 && maxSteps > 0) {
-        --maxSteps;
-        integer cx   = llList2Integer(queue, 0);
-        integer cy   = llList2Integer(queue, 1);
-        integer cdir = llList2Integer(queue, 2);
-        queue = llDeleteSubList(queue, 0, 2);
-
-        integer nx = cx + dirDX(cdir);
-        integer ny = cy + dirDY(cdir);
-
-        if (!bOk(nx, ny)) jump skip; // exits board
-
-        // Cycle guard
-        string key_ = (string)nx+","+(string)ny+","+(string)cdir;
-        if (llListFindList(visited, [key_]) >= 0) jump skip;
-        visited += [key_];
-
-        path = path + ";" + (string)nx + "," + (string)ny;
-        string res = laserInteract(nx, ny, cdir);
-
-        if (res == "pass") {
-            queue = [nx, ny, cdir] + queue;
-        } else if (llGetSubString(res,0,6) == "reflect") {
-            integer nd = (integer)llGetSubString(res,8,-1);
-            queue = [nx, ny, nd] + queue;
-        } else if (llGetSubString(res,0,4) == "split") {
-            list p = llParseString2List(res,[":"],[]);
-            integer d1 = (integer)llList2String(p,1);
-            integer d2 = (integer)llList2String(p,2);
-            // Prepend both forks; d1 runs to completion first (DFS).
-            queue = [nx, ny, d1, nx, ny, d2] + queue;
-        } else if (llGetSubString(res,0,6) == "destroy") {
-            list p = llParseString2List(res,[":"],[]);
-            list xy = llParseString2List(llList2String(p,1),[","],[]);
-            integer dx_ = llList2Integer(xy,0);
-            integer dy_ = llList2Integer(xy,1);
-            bSet(dx_, dy_, 0);
-            pushCell(dx_, dy_);
-        } else if (llGetSubString(res,0,3) == "king") {
-            gameResult = res; // "king:P"
-        }
-        // "absorb" → beam ends here, do nothing
-
-        @skip;
+// highlight every legal destination for the selected piece
+showDestinations() {
+    integer o;
+    for (o=0; o<8; ++o) {
+        integer nx = gSelX + dirDX(o);
+        integer ny = gSelY + dirDY(o);
+        if (moveCost(gSelX, gSelY, nx, ny, gActionsLeft) > 0) hlCell(nx, ny, 1);
     }
-
-    llMessageLinked(LINK_ALL_CHILDREN, LM_LASER_PATH, path, NULL_KEY);
-    return gameResult;
-}
-
-// ============================================================
-// VALID MOVES  (orthogonal adjacency, must land on empty cell)
-// ============================================================
-list validMoves(integer x, integer y) {
-    list moves = [];
-    list dd = [0,-1, 1,0, 0,1, -1,0];
-    integer i;
-    for (i=0; i<8; i+=2) {
-        integer nx = x + llList2Integer(dd,i);
-        integer ny = y + llList2Integer(dd,i+1);
-        if (bOk(nx,ny) && bGet(nx,ny)==0) moves += [nx,ny];
-    }
-    return moves;
 }
 
 // ============================================================
 // TURN MANAGEMENT
 // ============================================================
-string playerName(integer p) { if (p==P_RED) return "Red"; return "Blue"; }
+announceTurn() {
+    setStatus(playerName(gCurPlayer) + "'s turn — "
+        + (string)gActionsLeft + " action(s) left.");
+    if (gAIEnabled && gCurPlayer == gAIPlayer && gState != GS_GAMEOVER) {
+        string boardEnc = llDumpList2String(gBoard, ",");
+        string firedEnc = llDumpList2String(gFired, ",");
+        string capEnc   = llDumpList2String(gCaptured, ",");
+        llMessageLinked(LINK_ALL_CHILDREN, LM_AI_REQUEST,
+            boardEnc + "|" + (string)gCurPlayer + "|" + (string)gActionsLeft
+            + "|" + firedEnc + "|" + capEnc, NULL_KEY);
+    }
+}
 
-endAction() {
-    --gActionsLeft;
+// ---- Phase 3 helpers ----
+
+// At the start of a player's turn, each of their stunned pieces has a fixed
+// chance to recover (thaw).
+thawStunned(integer player) {
+    integer x; integer y;
+    for (y=0; y<BOARD_H; ++y)
+        for (x=0; x<BOARD_W; ++x) {
+            integer c = bGet(x,y);
+            if (cOwner(c)==player && cStun(c) && llFrand(1.0) < THAW_CHANCE) {
+                bSet(x,y, mkCell(cType(c), cOwner(c), cOrient(c), 0, cBombDiag(c)));
+                pushCell(x,y);
+            }
+        }
+}
+
+// Move a displaced piece to a random empty cell with a random orientation.
+displacePiece(integer cell) {
+    list empties;
+    integer x; integer y;
+    for (y=0; y<BOARD_H; ++y)
+        for (x=0; x<BOARD_W; ++x)
+            if (bGet(x,y)==0) empties += [y*BOARD_W + x];
+    if (llGetListLength(empties)==0) return;   // nowhere to go
+    integer pick = llList2Integer(empties, (integer)llFrand(llGetListLength(empties)));
+    integer rx = pick % BOARD_W;
+    integer ry = pick / BOARD_W;
+    integer no = (integer)llFrand(8.0);
+    bSet(rx,ry, mkCell(cType(cell), cOwner(cell), no, cStun(cell), cBombDiag(cell)));
+    pushCell(rx,ry);
+}
+
+// Follow per-turn caps when a piece moves (to = -1 drops the tracking).
+remapTracking(integer from, integer to) {
+    integer p = llListFindList(gFired, [from]);
+    if (p >= 0) {
+        if (to < 0) gFired = llDeleteSubList(gFired, p, p);
+        else gFired = llListReplaceList(gFired, [to], p, p);
+    }
+    p = llListFindList(gCaptured, [from]);
+    if (p >= 0) {
+        if (to < 0) gCaptured = llDeleteSubList(gCaptured, p, p);
+        else gCaptured = llListReplaceList(gCaptured, [to], p, p);
+    }
+}
+
+resetTurnState() {
+    gRotIdx = []; gRotStart = []; gRotSpent = [];
+    gFired = []; gCaptured = [];
+}
+
+spendActions(integer cost) {
+    gActionsLeft -= cost;
     clearHL();
     gState = GS_IDLE;
     gSelX = -1; gSelY = -1;
     if (gActionsLeft <= 0) {
-        gCurPlayer = 1 - gCurPlayer;
-        gActionsLeft = 2;
-        setStatus(playerName(gCurPlayer) + "'s turn — 2 actions left.");
-        if (gAIEnabled && gCurPlayer == gAIPlayer) {
-            // Encode board state and send to AI
-            string boardEnc = llDumpList2String(gBoard, ",");
-            llMessageLinked(LINK_ALL_CHILDREN, LM_AI_REQUEST,
-                boardEnc + "|" + (string)gCurPlayer + "|" + (string)gActionsLeft, NULL_KEY);
-        }
-    } else {
-        setStatus(playerName(gCurPlayer) + "'s turn — "
-            + (string)gActionsLeft + " action left.");
+        if (gCurPlayer == P_RED) gCurPlayer = P_GREEN;
+        else gCurPlayer = P_RED;
+        gActionsLeft = ACTIONS_PER_TURN;
+        resetTurnState();
+        thawStunned(gCurPlayer);
     }
+    announceTurn();
+}
+
+// Rotate the piece at (x,y) by 'step' (+1 = CW, +7 = CCW). Returning a piece to
+// its start-of-turn orientation refunds the rotation actions spent on it.
+doRotate(integer x, integer y, integer step) {
+    integer cell = bGet(x, y);
+    integer startO = cOrient(cell);
+    integer newO = (startO + step) % 8;
+    bSet(x, y, mkCell(cType(cell), cOwner(cell), newO, cStun(cell), cBombDiag(cell)));
+    pushCell(x, y);
+
+    integer idx = bIdx(x, y);
+    integer p = llListFindList(gRotIdx, [idx]);
+    if (p < 0) {
+        gRotIdx   += [idx];
+        gRotStart += [startO];          // orientation before the first rotation
+        gRotSpent += [0];
+        p = llGetListLength(gRotIdx) - 1;
+    }
+    integer spent = llList2Integer(gRotSpent, p);
+    if (newO == llList2Integer(gRotStart, p)) {
+        gRotSpent = llListReplaceList(gRotSpent, [0], p, p);
+        spendActions(-spent);           // refund prior charges; this one is free
+    } else {
+        gRotSpent = llListReplaceList(gRotSpent, [spent + 1], p, p);
+        spendActions(1);
+    }
+}
+
+// ============================================================
+// BEAM PHYSICS (Phase 2)
+// Beams travel in any of the 8 directions. Mirror interactions use a
+// single vector-reflection rule:  v' = v - 2(v·n)/(n·n) n , where n is
+// the reflective face's outward normal. sign(v·n): <0 front (reflect),
+// >0 back (destroy), ==0 graze (pass). Same rule covers flat mirrors
+// (cardinal normal) and 45° deflectors (diagonal normal).
+// ============================================================
+
+// direction index <- vector
+integer dirFromVec(integer dx, integer dy) {
+    integer i;
+    for (i=0; i<8; ++i)
+        if (llList2Integer(DDX,i)==dx && llList2Integer(DDY,i)==dy) return i;
+    return -1;
+}
+// reflect travel-dir d off a face whose outward normal points 'nrm'
+integer reflectOff(integer d, integer nrm) {
+    integer vx = dirDX(d);  integer vy = dirDY(d);
+    integer nx = dirDX(nrm); integer ny = dirDY(nrm);
+    integer dot = vx*nx + vy*ny;
+    integer nn  = nx*nx + ny*ny;          // 1 cardinal, 2 diagonal
+    integer f   = (2*dot) / nn;
+    return dirFromVec(vx - f*nx, vy - f*ny);
+}
+integer dotDir(integer d, integer nrm) {
+    return dirDX(d)*dirDX(nrm) + dirDY(d)*dirDY(nrm);
+}
+// the two directions perpendicular (±90°) to d
+list perpDirs(integer d) {
+    return [(d+2)%8, (d+6)%8];
+}
+integer inShieldArc(integer face, integer o) {
+    return (face==o || face==(o+1)%8 || face==(o+7)%8);
+}
+
+// What happens when a beam travelling 'd' enters cell (x,y)?
+// Returns: pass | absorb | random | hit | king | reflect:D | split:D1:D2
+string laserInteract(integer x, integer y, integer d) {
+    integer cell = bGet(x,y);
+    integer t = cType(cell);
+    integer o = cOrient(cell);
+
+    if (t == T_EMPTY)                       return "pass";
+    if (t == T_HOLE || t == T_HYPERHOLE)    return "absorb";
+    if (t == T_HYPERGON)                    return "random";
+    if (t == T_KING)                        return "king";
+    if (t == T_LASER || t == T_STUNNER) return "hit";
+    if (t == T_BOMB) {
+        // Bomb detonates ("center") when struck along an arm: orthogonal bomb on
+        // a cardinal beam, diagonal bomb on a diagonal beam. Otherwise side hit.
+        integer dDiag = (d % 2);   // 1 if the beam travels diagonally
+        integer detonate;
+        if (cBombDiag(cell)) detonate = dDiag;
+        else                 detonate = (1 - dDiag);
+        if (detonate) return "bomb:1";
+        return "bomb:0";
+    }
+    if (t == T_FOCT)                        return "reflect:" + (string)((d+4)%8);
+
+    if (t == T_POCT) {
+        integer face = (d+4)%8;             // face the beam strikes
+        if (inShieldArc(face, o)) return "reflect:" + (string)((d+4)%8);
+        return "hit";
+    }
+
+    if (t == T_ONEWAY) {                    // arrow points cardinal o
+        integer dt = dotDir(d, o);
+        if (dt > 0) return "pass";                      // with the arrow
+        if (dt < 0) return "reflect:" + (string)reflectOff(d, o); // against
+        return "hit";                                   // perpendicular destroys
+    }
+
+    if (t == T_SPLITTER) {                  // vertex points cardinal o
+        if (d == (o+4)%8) {                 // head-on into the vertex
+            list pc = perpDirs(d);
+            return "split:" + (string)llList2Integer(pc,0)
+                       + ":" + (string)llList2Integer(pc,1);
+        }
+        if (d == o) return "hit";           // back face exposed
+        return "pass";                      // off-axis / diagonal: misses
+    }
+
+    if (t == T_TRIMIR) {                    // normal = orient (flat or 45°)
+        integer dt = dotDir(d, o);
+        if (dt == 0) return "pass";         // graze
+        if (dt > 0)  return "hit";          // back face -> destroy
+        return "reflect:" + (string)reflectOff(d, o);
+    }
+
+    return "absorb";
+}
+
+// apply weapon effect to the piece at (x,y)
+applyHit(integer x, integer y, integer isStun) {
+    integer c = bGet(x,y);
+    if (isStun)
+        bSet(x, y, mkCell(cType(c), cOwner(c), cOrient(c), 1, cBombDiag(c)));
+    else
+        bSet(x, y, 0);
+    pushCell(x, y);
+}
+
+// Detonate a bomb at (x,y). center=1 -> affect the 8 neighbours (+ destroy the
+// bomb for a laser); center=0 -> bomb only. Returns "king:owner" if a non-stun
+// blast destroyed a King, else "".
+string detonateBomb(integer x, integer y, integer center, integer isStun) {
+    string kr = "";
+    if (center) {
+        integer o;
+        for (o=0; o<8; ++o) {
+            integer nx = x + dirDX(o);
+            integer ny = y + dirDY(o);
+            if (bOk(nx,ny)) {
+                integer nc = bGet(nx,ny);
+                integer nt = cType(nc);
+                if (nt != T_EMPTY && nt != T_HOLE && nt != T_HYPERHOLE) {
+                    if (!isStun && nt == T_KING) kr = "king:" + (string)cOwner(nc);
+                    applyHit(nx, ny, isStun);
+                }
+            }
+        }
+        if (!isStun) { bSet(x,y,0); pushCell(x,y); }   // laser also destroys the bomb
+    } else {
+        applyHit(x, y, isStun);   // side hit: bomb only
+    }
+    return kr;
+}
+
+// Trace a beam from weapon at (ox,oy). isStun => non-destructive (stun).
+// Returns "king:owner" if a King was struck by a (non-stun) beam, else "".
+string fireBeam(integer ox, integer oy, integer isStun) {
+    integer startDir = cOrient(bGet(ox,oy));
+    string path = (string)ox + "," + (string)oy;
+    string result = "";
+    list queue = [ox, oy, startDir];        // DFS: pop front, prepend
+    list visited = [];
+    integer maxSteps = 400;
+
+    while (llGetListLength(queue) >= 3 && maxSteps > 0) {
+        --maxSteps;
+        integer cx = llList2Integer(queue,0);
+        integer cy = llList2Integer(queue,1);
+        integer cd = llList2Integer(queue,2);
+        queue = llDeleteSubList(queue, 0, 2);
+
+        integer nx = cx + dirDX(cd);
+        integer ny = cy + dirDY(cd);
+        if (!bOk(nx,ny)) jump nxt;
+
+        string vkey = (string)nx+","+(string)ny+","+(string)cd;
+        if (llListFindList(visited,[vkey]) >= 0) jump nxt;
+        visited += [vkey];
+
+        path += ";" + (string)nx + "," + (string)ny;
+        string res = laserInteract(nx, ny, cd);
+
+        if (res == "pass") {
+            queue = [nx, ny, cd] + queue;
+        } else if (llGetSubString(res,0,6) == "reflect") {
+            integer rd = (integer)llGetSubString(res,8,-1);
+            queue = [nx, ny, rd] + queue;
+        } else if (llGetSubString(res,0,4) == "split") {
+            list pp = llParseString2List(res,[":"],[]);
+            integer d1 = (integer)llList2String(pp,1);
+            integer d2 = (integer)llList2String(pp,2);
+            queue = [nx, ny, d1, nx, ny, d2] + queue;
+        } else if (res == "random") {
+            integer rr = (integer)llFrand(8.0);
+            queue = [nx, ny, rr] + queue;
+        } else if (res == "hit") {
+            applyHit(nx, ny, isStun);
+        } else if (llGetSubString(res,0,3) == "bomb") {
+            integer center = (integer)llGetSubString(res,5,-1);
+            string kr = detonateBomb(nx, ny, center, isStun);
+            if (kr != "") result = kr;
+        } else if (res == "king") {
+            if (isStun) applyHit(nx, ny, 1);
+            else result = "king:" + (string)cOwner(bGet(nx,ny));
+        }
+        // "absorb" -> beam ends here
+
+        @nxt;
+    }
+
+    llMessageLinked(LINK_ALL_CHILDREN, LM_LASER_PATH, path, NULL_KEY);
+    return result;
 }
 
 doFire() {
-    string res = fireLaser(gCurPlayer);
-    if (llGetSubString(res,0,3) == "king") {
-        integer loser = (integer)llGetSubString(res,5,-1);
-        integer winner = 1 - loser;
-        setStatus(playerName(winner) + " WINS! Touch board to restart.");
+    integer t = cType(bGet(gSelX, gSelY));
+    if (t != T_LASER && t != T_STUNNER) {
+        setStatus("Only a Laser or Stunner can fire.");
+        return;
+    }
+    integer idx = bIdx(gSelX, gSelY);
+    if (llListFindList(gFired, [idx]) >= 0) {
+        setStatus("That weapon already fired this turn.");
+        return;
+    }
+    integer isStun = (t == T_STUNNER);
+    string res = fireBeam(gSelX, gSelY, isStun);
+
+    if (!isStun && llGetSubString(res,0,3) == "king") {
+        integer loser  = (integer)llGetSubString(res,5,-1);
+        integer winner = P_RED;
+        if (loser == P_RED) winner = P_GREEN;
+        setStatus(playerName(winner) + " WINS! Touch the board to restart.");
         llMessageLinked(LINK_ALL_CHILDREN, LM_GAME_OVER, (string)winner, NULL_KEY);
         gState = GS_GAMEOVER;
-    } else {
-        endAction();
+        return;
     }
+    gFired += [idx];    // this weapon has fired this turn
+    spendActions(1);    // firing costs one action
 }
 
 // ============================================================
-// INPUT HANDLING
+// INPUT
 // ============================================================
+
+// Execute a (possibly capturing) move. Stomping the enemy King wins.
+doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
+    integer captured = bGet(tx, ty);
+    integer mv = bGet(fx, fy);
+    integer fromIdx = bIdx(fx, fy);
+    integer toIdx = bIdx(tx, ty);
+    gRotIdx = []; gRotStart = []; gRotSpent = [];   // a move resets rotation refunds
+
+    // Moving onto the Hyper Hole displaces the mover to a random empty cell.
+    if (cType(captured) == T_HYPERHOLE) {
+        bSet(fx, fy, 0);
+        pushCell(fx, fy);
+        remapTracking(fromIdx, -1);
+        displacePiece(mv);
+        spendActions(cost);
+        return;
+    }
+
+    bSet(tx, ty, mv);
+    bSet(fx, fy, 0);
+    pushCell(fx, fy);
+    pushCell(tx, ty);
+    remapTracking(fromIdx, toIdx);
+
+    if (cType(captured) == T_KING) {
+        integer winner = cOwner(mv);
+        setStatus(playerName(winner) + " WINS by capture! Touch the board to restart.");
+        llMessageLinked(LINK_ALL_CHILDREN, LM_GAME_OVER, (string)winner, NULL_KEY);
+        gState = GS_GAMEOVER;
+        return;
+    }
+    if (cType(captured) != T_EMPTY) gCaptured += [toIdx];  // used its capture this turn
+    spendActions(cost);
+}
+
 handleTouch(integer x, integer y) {
     if (gState == GS_GAMEOVER) {
-        // Any touch restarts
         initBoard();
-        gCurPlayer = P_RED; gActionsLeft = 2; gState = GS_IDLE;
-        gSelX = -1; gSelY = -1;
+        gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
+        gState = GS_IDLE; gSelX = -1; gSelY = -1;
+        resetTurnState();
         clearHL(); broadcastBoard();
-        setStatus("Red's turn — 2 actions left.");
+        announceTurn();
         return;
     }
     if (gAIEnabled && gCurPlayer == gAIPlayer) return;
@@ -380,30 +651,26 @@ handleTouch(integer x, integer y) {
     integer owner = cOwner(cell);
 
     if (gState == GS_IDLE || gState == GS_SELECTED) {
-        if (t != T_EMPTY && owner == gCurPlayer) {
+        if (t != T_EMPTY && !isFeature(t) && owner == gCurPlayer) {
+            if (cStun(cell)) {
+                setStatus("That piece is stunned — it can't act this turn.");
+                return;
+            }
             gSelX = x; gSelY = y;
             gState = GS_SELECTED;
             clearHL();
-            // Highlight valid move destinations
-            list moves = validMoves(x, y);
-            integer i;
-            for (i=0; i<llGetListLength(moves); i+=2)
-                hlCell(llList2Integer(moves,i), llList2Integer(moves,i+1), 1);
-            // Show action dialog via child prims (they'll llDialog to nearest agent)
+            showDestinations();
             llMessageLinked(LINK_ALL_CHILDREN, LM_ACTION,
                 "MENU:" + (string)x + "," + (string)y, NULL_KEY);
         }
-
     } else if (gState == GS_AWAIT_DST) {
-        if (t == T_EMPTY && llAbs(x-gSelX)+llAbs(y-gSelY)==1) {
-            integer mv = bGet(gSelX, gSelY);
-            bSet(x, y, mv);  bSet(gSelX, gSelY, 0);
-            pushCell(gSelX, gSelY); pushCell(x, y);
-            endAction();
+        integer cost = moveCost(gSelX, gSelY, x, y, gActionsLeft);
+        if (cost > 0) {
+            doMove(gSelX, gSelY, x, y, cost);
         } else {
-            // Cancel move, return to selected state
             gState = GS_SELECTED;
             clearHL();
+            showDestinations();
         }
     }
 }
@@ -413,23 +680,15 @@ handleAction(string action) {
 
     if (action == "MOVE") {
         gState = GS_AWAIT_DST;
-        list moves = validMoves(gSelX, gSelY);
-        integer i;
-        for (i=0; i<llGetListLength(moves); i+=2)
-            hlCell(llList2Integer(moves,i), llList2Integer(moves,i+1), 1);
-        setStatus("Click destination square.");
+        clearHL();
+        showDestinations();
+        setStatus("Click a highlighted square. (diagonal = 2 actions)");
 
     } else if (action == "ROTATE_CW") {
-        integer c = bGet(gSelX, gSelY);
-        bSet(gSelX, gSelY, mkCell(cType(c), cOwner(c), (cOrient(c)+1)%4));
-        pushCell(gSelX, gSelY);
-        endAction();
+        doRotate(gSelX, gSelY, 1);
 
     } else if (action == "ROTATE_CCW") {
-        integer c = bGet(gSelX, gSelY);
-        bSet(gSelX, gSelY, mkCell(cType(c), cOwner(c), (cOrient(c)+3)%4));
-        pushCell(gSelX, gSelY);
-        endAction();
+        doRotate(gSelX, gSelY, 7);
 
     } else if (action == "FIRE") {
         doFire();
@@ -438,60 +697,53 @@ handleAction(string action) {
         gState = GS_IDLE;
         gSelX = -1; gSelY = -1;
         clearHL();
-        setStatus(playerName(gCurPlayer) + "'s turn — "
-            + (string)gActionsLeft + " actions left.");
+        announceTurn();
     }
 }
 
-// Apply a move sent by the AI script
+// Apply a move from the AI (Phase 1 subset; FIRE deferred)
 applyAIMove(string move) {
-    // Format: "MOVE:fx,fy,tx,ty" | "ROTATE_CW:x,y" | "ROTATE_CCW:x,y" | "FIRE"
-    list p = llParseString2List(move,[":"],[]);
-    string cmd = llList2String(p,0);
+    list p = llParseString2List(move, [":"], []);
+    string cmd = llList2String(p, 0);
+    if (cmd == "PASS") { spendActions(gActionsLeft); return; }  // skip remaining turn
 
-    if (cmd == "FIRE") { doFire(); return; }
-
-    list xy = llParseString2List(llList2String(p,1),[","],[]);
+    list xy = llParseString2List(llList2String(p,1), [","], []);
     integer ax = llList2Integer(xy,0);
     integer ay = llList2Integer(xy,1);
 
-    if (cmd == "MOVE") {
+    if (cmd == "FIRE") {
+        gSelX = ax; gSelY = ay;
+        doFire();
+    } else if (cmd == "MOVE") {
         integer tx = llList2Integer(xy,2);
         integer ty = llList2Integer(xy,3);
-        integer cv = bGet(ax,ay);
-        bSet(tx,ty,cv); bSet(ax,ay,0);
-        pushCell(ax,ay); pushCell(tx,ty);
+        integer cost = moveCost(ax, ay, tx, ty, gActionsLeft);
+        if (cost < 1) cost = 1;
+        doMove(ax, ay, tx, ty, cost);
     } else if (cmd == "ROTATE_CW") {
-        integer c = bGet(ax,ay);
-        bSet(ax,ay, mkCell(cType(c),cOwner(c),(cOrient(c)+1)%4));
-        pushCell(ax,ay);
+        doRotate(ax, ay, 1);
     } else if (cmd == "ROTATE_CCW") {
-        integer c = bGet(ax,ay);
-        bSet(ax,ay, mkCell(cType(c),cOwner(c),(cOrient(c)+3)%4));
-        pushCell(ax,ay);
+        doRotate(ax, ay, 7);
     }
-    endAction();
 }
 
-// ============================================================
-// ENTRY POINT
 // ============================================================
 default {
     state_entry() {
         gAIEnabled = FALSE;
-        gAIPlayer  = P_BLUE;
+        gAIPlayer  = P_GREEN;
         gCurPlayer = P_RED;
-        gActionsLeft = 2;
+        gActionsLeft = ACTIONS_PER_TURN;
         gState = GS_IDLE;
         gSelX = -1; gSelY = -1;
         initBoard();
-        llSleep(1.0); // allow child prims to initialise
+        llSleep(1.0);
+        layoutCells();      // arrange cells by name (fixes any link-order scramble)
         broadcastBoard();
-        setStatus("Red's turn — 2 actions left. Touch a piece to select.");
+        announceTurn();
     }
 
     touch_start(integer n) {
-        // Map touch UV → board cell
         vector st = llDetectedTouchST(0);
         integer bx = (integer)(st.x  * (float)BOARD_W);
         integer by = (integer)((1.0 - st.y) * (float)BOARD_H);
@@ -500,27 +752,28 @@ default {
 
     link_message(integer sender_num, integer num, string str, key id) {
         if (num == LM_PIECE_TOUCH) {
-            list xy = llParseString2List(str,[","],[]);
+            list xy = llParseString2List(str, [","], []);
             handleTouch(llList2Integer(xy,0), llList2Integer(xy,1));
-
         } else if (num == LM_ACTION) {
             handleAction(str);
-
         } else if (num == LM_AI_RESPONSE) {
-            if (gAIEnabled && gCurPlayer == gAIPlayer)
-                applyAIMove(str);
-
+            if (gAIEnabled && gCurPlayer == gAIPlayer) applyAIMove(str);
         } else if (num == LM_CONFIG) {
-            if (str == "AI_ON")         gAIEnabled = TRUE;
-            else if (str == "AI_OFF")   gAIEnabled = FALSE;
-            else if (str == "AI_RED")   gAIPlayer  = P_RED;
-            else if (str == "AI_BLUE")  gAIPlayer  = P_BLUE;
+            if (str == "AI_ON") {
+                gAIEnabled = TRUE;
+                // kick off immediately if it's already the AI's turn
+                if (gCurPlayer == gAIPlayer && gState != GS_GAMEOVER) announceTurn();
+            }
+            else if (str == "AI_OFF")  gAIEnabled = FALSE;
+            else if (str == "AI_RED")  gAIPlayer  = P_RED;
+            else if (str == "AI_GREEN")gAIPlayer  = P_GREEN;
             else if (str == "RESET") {
                 initBoard();
-                gCurPlayer = P_RED; gActionsLeft = 2;
+                gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
                 gState = GS_IDLE; gSelX = -1; gSelY = -1;
+                resetTurnState();
                 clearHL(); broadcastBoard();
-                setStatus("Red's turn — 2 actions left.");
+                announceTurn();
             }
         }
     }

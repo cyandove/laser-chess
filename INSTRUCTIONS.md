@@ -1,154 +1,160 @@
 # Advanced Laser Chess — How to Play
 
-A two-player game of mirrors and light, inspired by *Advanced Laser Chess*
-(Amiga, 1989). You and your opponent take turns nudging, rotating, and firing —
-the goal is to bounce your laser through the board until it strikes the enemy
-**King**.
+A two-player game of mirrors and light, after *Advanced Laser Chess* (Amiga, 1989).
+You and your opponent take turns nudging, rotating, and firing — the goal is to bounce a
+laser through the board until it destroys the enemy **King**.
 
-This document describes how **this LSL implementation** actually behaves. Where it
-simplifies the original game, that's noted.
+This describes how **this LSL implementation** behaves.
 
 ---
 
 ## The board
 
-- **15 columns × 11 rows** (X = 0–14 west→east, Y = 0–10 north→south).
-- **Red** starts on the south edge (rows 9–10). **Blue** starts on the north edge
-  (rows 0–1).
-- A neutral **Teleporter** sits at the centre, cell (7, 5).
-- Red moves first.
+- **15 × 11** squares. **Red** starts on the **west** side (columns 0–2), **Green** on the
+  **east** (columns 12–14). Red moves first.
+- Each side has 27 pieces: two full back ranks plus a front rank of five octagons.
+- The centre column has four **Holes** and, at the very centre, one **Hyper Hole**.
+- Coordinates here are `(x,y)` with x = 0–14 west→east, y = 0–10 north→south.
 
-Every piece "faces" one of four directions — **N, E, S, W** — shown after its label
-(e.g. `DFL\nE` is a deflector facing east). Facing matters for mirrors: it decides
-which way they bend the beam, and which side is vulnerable.
+Every piece **faces** one of **8 directions** (N, NE, E, SE, S, SW, W, NW), shown after its
+label (e.g. `TRI\nSE`). Facing decides how mirrors bend the beam and which side is exposed.
 
 ---
 
 ## A turn
 
-On your turn you take **2 actions**. An action is one of:
+You get **3 actions** per turn. An action is one of:
 
-| Action | What it does |
-|--------|--------------|
-| **Move** | Slide one piece to an orthogonally adjacent **empty** square (N/E/S/W). |
-| **Rotate CW** | Turn one piece 90° clockwise. |
-| **Rotate CCW** | Turn one piece 90° counter-clockwise. |
-| **Fire** | Only the **Laser** can do this. Emits the beam and resolves it instantly. |
+| Action | Cost | What it does |
+|--------|------|--------------|
+| **Move** (orthogonal) | 1 | Slide a piece one square N/E/S/W. |
+| **Move** (diagonal) | 2 | Slide a piece one square diagonally (needs 2 actions). |
+| **Rotate** (CW / CCW) | 1 | Turn a piece 45°. |
+| **Fire** | 1 | A Laser or Stunner shoots; resolves instantly. |
 
-You may split your two actions across two pieces, spend both on one piece (e.g. rotate
-then fire), or move twice to reach a diagonal square. Firing ends that action; the beam
-is traced and any hits resolve immediately, then it's your second action (or the
-opponent's turn).
+Rules of thumb:
+- **Capture by stomping:** a **King** or either **Octagon** may move onto an enemy piece to
+  destroy it — **once per turn** each.
+- A **Laser/Stunner** may fire **once per turn** each (you have several, so you can fire more
+  than one weapon in a turn).
+- **Rotation is refundable:** rotating a piece back to the orientation it had at the start of
+  your turn refunds the actions you spent rotating it.
 
 ### Controls in-world
 
-Touch one of **your** pieces → a dialog appears with **Move / Rotate CW / Rotate CCW /
-Fire / Cancel**. Choosing **Move** highlights the legal destination squares; touch one
-to complete the move. After the game ends, touch the board to restart.
+Touch one of **your** pieces → a dialog appears: **Move / Rotate CW / Rotate CCW /
+[Fire] / Cancel**. *Move* glows the legal destinations (an occupied capture target keeps the
+enemy piece visible underneath); touch one to go there. After the game ends, touch the board
+to restart. A **stunned** piece can't be selected until it recovers.
 
 ---
 
-## Firing the laser
+## Firing
 
-When you fire, a beam leaves your Laser in the direction it faces and travels in a
-straight line until something happens to it:
+A beam leaves the weapon in the direction it faces and travels in a straight line —
+**in any of the 8 directions** — until something happens to it:
 
-- **Empty square** → passes straight through.
-- **Mirror piece** → bends 90° (see each piece below). Both your mirrors *and* the
-  opponent's are fair game for setting up a shot.
-- **Splitter** → the beam forks into two.
-- **Edge of the board** → absorbed (beam ends).
-- **A vulnerable face** → that piece is **destroyed** and removed from the board.
-- **A King** → the game ends. (See *Winning* below.)
+- **Empty square** → passes through.
+- **Mirror** → bends (see each piece). Both players' mirrors are fair game for your shot.
+- **Splitter vertex** → forks into two beams.
+- **Board edge / Hole / Hyper Hole** → absorbed (beam ends).
+- **An exposed (non-mirror) face** → that piece is **destroyed** (Laser) or **stunned**
+  (Stunner), and the beam stops.
+- **A King** → Laser: that King's owner **loses**. Stunner: the King is merely stunned.
 
-> ⚠️ **Friendly fire is real.** The beam doesn't care who owns a piece. You can
-> destroy your own pieces, and if your beam loops back into your *own* King, **you
-> lose**. Plan the whole path, not just the first bounce.
+> ⚠️ **Friendly fire is real**, and there's no immunity for the piece that fired. A beam that
+> bounces back can destroy/stun your own pieces — and routing it into your **own King** loses
+> the game. Trace the whole path before you shoot.
 
 ---
 
 ## The pieces
 
+Orientation matters in **8 directions**.
+
 ### ♦ King — `KING`
-The piece you must protect. It has no mirror. If the laser beam reaches **either**
-King, that King's owner **loses** immediately. It can move and rotate (rotation has no
-mechanical effect). Keep it shielded behind mirrors and out of beam lines.
+Protect it. If **either** King is destroyed (beam, capture, or bomb blast), that owner loses.
+The King can **capture by stomping** (once per turn). It has no mirror — a beam from any side
+destroys it.
 
-### ▣ Laser — `LZR`
-Your beam source — one per side. Move and rotate it to aim; **Fire** to shoot. The beam
-exits the face it points toward. A Laser struck by a beam is **destroyed**, so don't
-aim a shot that bounces back into it.
+### ▼ Laser — `LASR`
+Your main weapon. Rotate to aim, then **Fire**. Has no mirror; a beam striking it destroys it.
+Fires once per turn.
 
-### ◤ Deflector — `DFL`
-A single 45° mirror that **bends the beam 90°**. Its facing sets the diagonal:
+### ♣ Stunner — `STUN`
+Fires a **non-destructive** beam that **stuns** an exposed piece instead of destroying it. A
+stunned piece can't act; each turn it has a fixed chance to recover. The Stunner itself is
+shielded over a 135° arc opposite its firing direction. Fires once per turn.
 
-- Facing **N or S** → acts as a `/` mirror: a beam going **N→E**, **E→N**, **S→W**,
-  **W→S**.
-- Facing **E or W** → acts as a `\` mirror: a beam going **N→W**, **W→N**, **S→E**,
-  **E→S**.
+### ▮ One-Way Mirror — `1WAY`
+A beam travelling **with** its arrow passes straight through; a beam **against** it is
+reflected; a beam hitting it **perpendicular** destroys it.
 
-In this implementation the Deflector reflects a beam arriving from **any** direction
-(both faces mirror). Rotating it is how you re-aim a bounce.
+### ◣ Triangular Mirror — `TRI`
+A single mirror with an exposed back.
+- Facing a **cardinal** direction → flat mirror (reflects a head-on beam 180°).
+- Facing a **diagonal** direction → 45° deflector (turns the beam 90°).
+A beam hitting its **back** destroys it; a beam grazing the edge passes.
 
-### ◬ Defender — `DEF`
-An **armoured, one-way** mirror. The side it **faces is mirrored** and deflects the
-beam (same 90° rule as the Deflector). A hit on its **back** (the opposite side)
-**destroys it**. Hits on its two **sides** are harmlessly **absorbed**. Use it as a
-shield that only protects from the front — and watch your opponent trying to get a beam
-around to its back.
+### ✚ Bomb — `BOMB` (`+` orthogonal / `X` diagonal)
+A beam striking it **along an arm** is a **center hit**; otherwise a **side hit**. Arms point
+cardinally for a `+` bomb, diagonally for an `X` bomb.
+- **Center + Laser:** destroys the bomb **and all 8 surrounding pieces** (a neighbouring King
+  dies → that owner loses).
+- **Center + Stunner:** stuns all 8 neighbours.
+- **Side hit:** only the bomb is destroyed/stunned.
 
-### ◇ Switch — `SWT`
-A **double mirror that cannot be destroyed** by the beam. It always bends an incoming
-beam **90° clockwise**, from any direction (N→E→S→W→N). Reliable, indestructible
-plumbing for your beam — but it bends *either* player's shots, so it cuts both ways.
+### ✺ Hypergon — `HYPR`
+**Immune** to Laser and Stunner — a beam entering it **comes out in a random direction**.
+Indestructible by fire.
 
-### ⤜ Splitter — `SPL`
-**Splits the beam into two.** One copy continues straight through; the other is
-deflected **90° clockwise**. Both resulting beams are traced fully (each can bounce,
-split again, destroy pieces, or hit a King). The Splitter itself is not destroyed.
-A well-placed Splitter lets one shot threaten two lines at once.
+### ◤ Beam Splitter — `SPLT`
+A beam hitting its **vertex** head-on **splits into two** perpendicular beams. A beam into its
+**back** destroys it. A beam that isn't a head-on vertex hit (including any diagonal) **misses**
+and passes through.
 
-### ✦ Teleporter — `TELE`
-Neutral piece fixed at the board centre (7, 5). In this implementation it **absorbs**
-the beam — the laser stops there.
+### ⬡ Fully-Mirrored Octagon — `OCT`
+Eight mirrored faces: reflects any beam **180°** straight back. **Indestructible** by fire. Can
+**capture by stomping** (once per turn).
 
-> In the original *Advanced Laser Chess*, the central device also displaces pieces that
-> land on it. That displacement mechanic is **not** implemented here; the Teleporter
-> currently only blocks the beam.
+### ⬢ Partially-Mirrored Octagon — `oct`
+A 135° mirrored shield over three of its eight faces. A beam striking the **shielded** side
+reflects 180°; a beam on an **exposed** face destroys it. Can **capture by stomping**.
+
+### ✱ Hyper Hole — `HOLE *`
+Board feature at the centre. Absorbs beams. A piece that **moves onto it is displaced** to a
+random empty square with a random orientation.
+
+### ✖ Hole — `HOLE`
+Board feature. **Impassable** (you can't move onto it) and absorbs beams.
 
 ---
 
 ## Winning
 
-You win when the laser beam — yours on your turn — reaches the **opponent's King**. The
-beam may take any path: straight, bounced off any number of mirrors, or arriving via a
-splitter fork. Because of friendly fire, you can also *lose* on your own turn by
-routing the beam into your own King.
-
-When a King is hit, the game announces the winner and freezes. **Touch the board to
-start a new game.**
+Destroy the enemy **King** — by laser beam, by stomping it with your King/Octagon, or by a bomb
+blast. Because of friendly fire you can also *lose* on your own turn by hitting your own King.
+When a King falls the game announces the winner and freezes; **touch the board to restart.**
 
 ---
 
-## Quick strategy notes
+## Strategy notes
 
-- **Think in paths, not squares.** A single rotation can swing your beam across the
-  whole board. Trace it to the end before you fire.
-- **Mirrors are shared.** Every Deflector, Switch, and Splitter bends *both* players'
-  beams. Position yours so they help your shot and hinder the reply.
-- **Defenders are directional.** They only shield from the front. Manoeuvre to hit the
-  back, or rotate yours to keep the armoured face toward the threat.
-- **Mind your own Laser and King.** A beam that loops home destroys your cannon or ends
-  the game in your opponent's favour.
-- **Two actions = setup + payoff.** A common turn is *rotate a mirror, then fire* —
-  arrange the bounce and take the shot in one turn.
+- **Think in paths, not squares.** One 45° rotation can swing your beam across the board.
+- **Mirrors are shared.** Every mirror, splitter, and octagon bends *both* players' beams.
+- **Triangular mirrors and the partial octagon are directional** — hit them on the exposed side
+  to destroy them; keep your own protected face toward the threat.
+- **Stunners buy tempo** — freeze an enemy Laser before it can fire.
+- **Bombs are area threats** — a center hit clears a whole neighbourhood (including, sometimes,
+  a King). Keep your King away from your own bombs.
+- **Mind the centre** — the Hyper Hole scatters anything that steps on it.
 
 ---
 
 ## Playing against the AI
 
-This build ships with an optional AI opponent in a separate, swappable script. By
-default it plays **Blue**. To toggle it, see *Turning the AI on/off* in
-[SETUP.md](SETUP.md). The bundled AI is a basic greedy player (it takes a winning shot
-when one exists, otherwise sets up or moves); it's designed to be replaced with a
-stronger one without touching the game rules.
+An optional AI opponent ships in a separate, swappable script (`ai_controller.lsl`), playing
+**Green** by default. Toggle it via the config messages in [SETUP.md](SETUP.md). The bundled AI
+is a greedy baseline — it takes a winning shot when one exists, otherwise the best
+destroying/stunning shot, a capture, an advance toward your King, or a rotation. It's designed
+to be replaced by a stronger AI that speaks the same one-action-per-request protocol.
