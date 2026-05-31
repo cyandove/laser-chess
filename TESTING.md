@@ -78,19 +78,19 @@ so the build is link-order-proof. **Do NOT run `builder_layout.lsl`.**
 Compare against `ALC_SETUP.md`. You should see, **Red on the left (cols 0–2)** and
 **Green on the right (cols 12–14)**:
 
-- [ ] **King** (`KING`) centered in each back column — Red at (0,5), Green at (14,5).
-- [ ] **Two Lasers** (`LASR E` / `LASR W`) flanking each King at rows 4 and 6.
-- [ ] **Three Stunners** (`STUN`) per side — back column rows 3 & 7, middle column row 5.
-- [ ] **One-Way Mirrors** (`1WAY`) at the four corners of each side's back block.
-- [ ] **Bombs** (`BOMB +`) at rows 2 & 8 of the back column.
-- [ ] **Hypergons** (`HYPR`) at rows 3 & 7 of the middle column.
-- [ ] **Beam Splitters** (`SPLT`) at rows 4 & 6 of the middle column.
-- [ ] **Front rank of 5 octagons** — four partial (`oct`) + one full (`OCT`, center) in
+- [x] **King** (`KING`) centered in each back column — Red at (0,5), Green at (14,5).
+- [x] **Two Lasers** (`LASR E` / `LASR W`) flanking each King at rows 4 and 6.
+- [x] **Three Stunners** (`STUN`) per side — back column rows 3 & 7, middle column row 5.
+- [x] **One-Way Mirrors** (`1WAY`) at the four corners of each side's back block.
+- [x] **Bombs** (`BOMB +`) at rows 2 & 8 of the back column.
+- [x] **Hypergons** (`HYPR`) at rows 3 & 7 of the middle column.
+- [x] **Beam Splitters** (`SPLT`) at rows 4 & 6 of the middle column.
+- [x] **Front rank of 5 octagons** — four partial (`oct`) + one full (`OCT`, center) in
       col 2 (Red) / col 12 (Green), rows 3–7.
-- [ ] **Triangular Mirrors** (`TRI`) filling the remaining back/middle slots.
-- [ ] **Center column features**: Holes (`HOLE`) at (7,1) (7,3) (7,7) (7,9) and a
+- [x] **Triangular Mirrors** (`TRI`) filling the remaining back/middle slots.
+- [x] **Center column features**: Holes (`HOLE`) at (7,1) (7,3) (7,7) (7,9) and a
       **Hyper Hole** (`HOLE *`) at (7,5).
-- [ ] Direction letters (N/E/S/W/NE/…) read correctly on each piece.
+- [x] Direction letters (N/E/S/W/NE/…) read correctly on each piece.
 
 ---
 
@@ -98,20 +98,20 @@ Compare against `ALC_SETUP.md`. You should see, **Red on the left (cols 0–2)**
 
 Click any **Red** piece → a dialog appears (Move / Rot CW / Rot CCW / [Fire] / Cancel).
 
-- [ ] **Move**: choose *Move* → legal squares highlight. Click one to move there.
-- [ ] **Diagonal costs 2**: with 3 actions, diagonal targets are offered; after spending
+- [!] **Move**: choose *Move* → legal squares highlight. Click one to move there. Feedback: The highlight completely overrides the neighbors (for example to stomp, you can't see the enemy piece's color any more). Movement is a bit laggy when you click to move. 
+- [x] **Diagonal costs 2**: with 3 actions, diagonal targets are offered; after spending
       down to 1 action, diagonals stop being highlighted (only orthogonals remain).
-- [ ] **Rotation**: *Rot CW* / *Rot CCW* turns the piece 45° (the direction label steps
-      N→NE→E…). Costs 1 action.
-- [ ] **3 actions/turn**: after 3 actions' worth, the turn flips to Green (hovertext
+- [!] **Rotation**: *Rot CW* / *Rot CCW* turns the piece 45° (the direction label steps
+      N→NE→E…). Costs 1 action. Feedback: Rotating back to it's starting spot should refund the actions
+- [x] **3 actions/turn**: after 3 actions' worth, the turn flips to Green (hovertext
       updates). A diagonal move (2) + a rotation (1) should end the turn.
-- [ ] **Capture by stomping**: move a **King** or an **Octagon** onto an *enemy*
+- [x] **Capture by stomping**: move a **King** or an **Octagon** onto an *enemy*
       piece — it's removed and your piece takes the square. Try it.
-- [ ] **Non-capturers can't stomp**: a Laser/Mirror/etc. is *not* offered a move onto an
+- [x] **Non-capturers can't stomp**: a Laser/Mirror/etc. is *not* offered a move onto an
       occupied square.
 - [ ] **King capture wins**: stomp an enemy King with your King/Octagon → "WINS by
       capture!" and the board freezes. Touch the board to restart.
-- [ ] **Turn alternation**: you control whichever side's turn it is; clicking the other
+- [x] **Turn alternation**: you control whichever side's turn it is; clicking the other
       side's pieces does nothing until their turn.
 
 ---
@@ -124,21 +124,21 @@ ribbon draws if `laser_fx` is installed). Firing costs 1 action.
 Good things to verify:
 
 - [ ] **Straight beam** stops at the board edge.
-- [ ] **Triangular Mirror** deflects: a diagonal-facing one turns the beam 90°, a
+- [x] **Triangular Mirror** deflects: a diagonal-facing one turns the beam 90°, a
       cardinal-facing one bounces it straight back (180°).
 - [ ] **Hitting a mirror's back face destroys it** (Triangular Mirror, One-Way Mirror
       perpendicular, Beam Splitter back).
-- [ ] **One-Way Mirror**: beam passes through with the arrow, reflects against it.
-- [ ] **Beam Splitter**: a head-on hit to the vertex makes **two** beams; a diagonal beam
-      passes through (misses).
+- [x] **One-Way Mirror**: beam passes through with the arrow, reflects against it.
+- [!] **Beam Splitter**: a head-on hit to the vertex makes **two** beams; a diagonal beam
+      passes through (misses). Feedback: splitting the stun beam with the splitter, it hit another piece but the piece did not change to say "STUN"
 - [ ] **Octagons reflect 180°**; the **Full** octagon is indestructible, the **Partial**
       one is destroyed if the beam hits an unshielded face.
 - [ ] **Hypergon**: beam emerges in a random direction (fire repeatedly — output varies).
 - [ ] **Holes / Hyper Hole** absorb the beam.
-- [ ] **Friendly fire**: route a beam (off a mirror) back into your own piece — it's
+- [x] **Friendly fire**: route a beam (off a mirror) back into your own piece — it's
       destroyed. Into your own King → you lose.
 - [ ] **Win**: get a Laser beam to the enemy King → "WINS!".
-- [ ] **Stunner** doesn't destroy — the struck piece turns to its stunned state
+- [x] **Stunner** doesn't destroy — the struck piece turns to its stunned state
       (the stun flag is set; *enforcement* that stunned pieces can't act is Phase 3).
 
 ---
