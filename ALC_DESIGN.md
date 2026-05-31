@@ -115,3 +115,23 @@ Per-piece, given incoming travel dir `d`:
 **Friendly fire is real** and there is no firing-piece immunity — a returning beam
 can destroy/stun the piece that fired it. Splitter forks are traced DFS so each
 branch stays contiguous for the ribbon FX.
+
+## Special mechanics (Phase 3)
+
+- **Bomb.** Struck along an arm = *center* hit; otherwise *side*. Arms are cardinal
+  for an orthogonal bomb, diagonal for a diagonal bomb (so an orthogonal bomb
+  detonates on a cardinal beam, a diagonal bomb on a diagonal beam). Center +
+  laser → destroy bomb and all 8 neighbours (a King neighbour → that owner loses);
+  center + stun → stun the 8 neighbours. Side → bomb only (destroyed/stunned).
+  Neighbour bombs do not chain.
+- **Stunner.** A stun beam sets the target's stun flag instead of destroying it. A
+  stunned piece **cannot be selected/acted** on. At the start of each player's turn,
+  every one of their stunned pieces has a fixed `THAW_CHANCE` (0.34) to recover.
+- **Hyper Hole.** Enterable: moving onto it **displaces** the mover to a random empty
+  cell with a random orientation; the hole stays. Absorbs beams.
+- **Hole.** Impassable (not a legal move target). Absorbs beams. (The "piece ending on
+  it is removed" rule would only apply to forced displacement, which we route to empty
+  cells instead.)
+- **Per-turn caps.** Each piece may **fire** once and **capture** once per turn. Caps
+  are tracked by board index and follow a piece when it moves; all per-turn state
+  (caps + rotation refunds) resets at end of turn.

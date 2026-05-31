@@ -1,13 +1,14 @@
 // ============================================================
-// Advanced Laser Chess — Game Controller  (ALC rewrite, Phase 2)
+// Advanced Laser Chess — Game Controller  (ALC rewrite, Phase 3)
 // Root prim of the board linkset. Children run piece.lsl.
 //
 // Done: cell model (12 types, 8 orientations), full ALC starting board,
-// rendering, 3 actions/turn, orthogonal move (diagonal costs 2),
-// 45-degree rotation, capture-by-moving (King + Octagons), and 8-direction
-// beam physics for Laser (destroys) and Stunner (stuns).
-// Deferred to Phase 3: Bomb area effect, stun/thaw enforcement, Hyper Hole
-// displacement, Hole removal-on-entry, once-per-turn caps.
+// rendering + auto-layout, 3 actions/turn, orthogonal move (diagonal costs 2),
+// 45-degree rotation w/ refund-on-return, capture-by-moving (King + Octagons),
+// 8-direction beam physics (Laser destroys / Stunner stuns), Bomb blast
+// (center vs side), stun enforcement + per-turn thaw, Hyper Hole displacement,
+// and once-per-turn caps on firing and capturing.
+// Hole is impassable; "removal on entry" only via displacement (avoided here).
 //
 // Board: 15 wide (x 0-14, W->E) x 11 tall (y 0-10, N->S).
 // Red = cols 0-2 (west), Green = cols 12-14 (east). See ALC_DESIGN.md.
@@ -83,6 +84,12 @@ integer gAIPlayer;
 list    gRotIdx;
 list    gRotStart;
 list    gRotSpent;
+
+// Per-turn caps: board indices of pieces that have fired / captured this turn.
+list    gFired;
+list    gCaptured;
+
+float   THAW_CHANCE = 0.34;   // per-turn chance a stunned piece recovers
 
 // ============================================================
 // ENCODING  cell = type + owner*100 + orient*1000 + stun*10000 + bombDiag*100000
@@ -242,10 +249,14 @@ integer moveCost(integer fx, integer fy, integer nx, integer ny, integer actions
     integer dst = bGet(nx,ny);
     integer dt = cType(dst);
     if (dt == T_EMPTY) return cost;
-    if (isFeature(dt)) return -1;        // Holes handled in Phase 3
-    // occupied: only a capture by an enemy-capturing mover
+    if (dt == T_HYPERHOLE) return cost;  // enterable: displaces the mover
+    if (isFeature(dt)) return -1;        // Hole is impassable
+    // occupied: only a capture by an enemy-capturing mover, once per turn
     integer mover = bGet(fx,fy);
-    if (cOwner(dst) != cOwner(mover) && canCapture(cType(mover))) return cost;
+    if (cOwner(dst) != cOwner(mover) && canCapture(cType(mover))) {
+        if (llListFindList(gCaptured, [bIdx(fx,fy)]) >= 0) return -1; // already captured
+        return cost;
+    }
     return -1;
 }
 
@@ -272,6 +283,57 @@ announceTurn() {
     }
 }
 
+// ---- Phase 3 helpers ----
+
+// At the start of a player's turn, each of their stunned pieces has a fixed
+// chance to recover (thaw).
+thawStunned(integer player) {
+    integer x; integer y;
+    for (y=0; y<BOARD_H; ++y)
+        for (x=0; x<BOARD_W; ++x) {
+            integer c = bGet(x,y);
+            if (cOwner(c)==player && cStun(c) && llFrand(1.0) < THAW_CHANCE) {
+                bSet(x,y, mkCell(cType(c), cOwner(c), cOrient(c), 0, cBombDiag(c)));
+                pushCell(x,y);
+            }
+        }
+}
+
+// Move a displaced piece to a random empty cell with a random orientation.
+displacePiece(integer cell) {
+    list empties;
+    integer x; integer y;
+    for (y=0; y<BOARD_H; ++y)
+        for (x=0; x<BOARD_W; ++x)
+            if (bGet(x,y)==0) empties += [y*BOARD_W + x];
+    if (llGetListLength(empties)==0) return;   // nowhere to go
+    integer pick = llList2Integer(empties, (integer)llFrand(llGetListLength(empties)));
+    integer rx = pick % BOARD_W;
+    integer ry = pick / BOARD_W;
+    integer no = (integer)llFrand(8.0);
+    bSet(rx,ry, mkCell(cType(cell), cOwner(cell), no, cStun(cell), cBombDiag(cell)));
+    pushCell(rx,ry);
+}
+
+// Follow per-turn caps when a piece moves (to = -1 drops the tracking).
+remapTracking(integer from, integer to) {
+    integer p = llListFindList(gFired, [from]);
+    if (p >= 0) {
+        if (to < 0) gFired = llDeleteSubList(gFired, p, p);
+        else gFired = llListReplaceList(gFired, [to], p, p);
+    }
+    p = llListFindList(gCaptured, [from]);
+    if (p >= 0) {
+        if (to < 0) gCaptured = llDeleteSubList(gCaptured, p, p);
+        else gCaptured = llListReplaceList(gCaptured, [to], p, p);
+    }
+}
+
+resetTurnState() {
+    gRotIdx = []; gRotStart = []; gRotSpent = [];
+    gFired = []; gCaptured = [];
+}
+
 spendActions(integer cost) {
     gActionsLeft -= cost;
     clearHL();
@@ -281,7 +343,8 @@ spendActions(integer cost) {
         if (gCurPlayer == P_RED) gCurPlayer = P_GREEN;
         else gCurPlayer = P_RED;
         gActionsLeft = ACTIONS_PER_TURN;
-        gRotIdx = []; gRotStart = []; gRotSpent = [];   // reset rotation refunds
+        resetTurnState();
+        thawStunned(gCurPlayer);
     }
     announceTurn();
 }
@@ -360,7 +423,17 @@ string laserInteract(integer x, integer y, integer d) {
     if (t == T_HOLE || t == T_HYPERHOLE)    return "absorb";
     if (t == T_HYPERGON)                    return "random";
     if (t == T_KING)                        return "king";
-    if (t == T_LASER || t == T_STUNNER || t == T_BOMB) return "hit"; // bomb area: Phase 3
+    if (t == T_LASER || t == T_STUNNER) return "hit";
+    if (t == T_BOMB) {
+        // Bomb detonates ("center") when struck along an arm: orthogonal bomb on
+        // a cardinal beam, diagonal bomb on a diagonal beam. Otherwise side hit.
+        integer dDiag = (d % 2);   // 1 if the beam travels diagonally
+        integer detonate;
+        if (cBombDiag(cell)) detonate = dDiag;
+        else                 detonate = (1 - dDiag);
+        if (detonate) return "bomb:1";
+        return "bomb:0";
+    }
     if (t == T_FOCT)                        return "reflect:" + (string)((d+4)%8);
 
     if (t == T_POCT) {
@@ -406,6 +479,32 @@ applyHit(integer x, integer y, integer isStun) {
     pushCell(x, y);
 }
 
+// Detonate a bomb at (x,y). center=1 -> affect the 8 neighbours (+ destroy the
+// bomb for a laser); center=0 -> bomb only. Returns "king:owner" if a non-stun
+// blast destroyed a King, else "".
+string detonateBomb(integer x, integer y, integer center, integer isStun) {
+    string kr = "";
+    if (center) {
+        integer o;
+        for (o=0; o<8; ++o) {
+            integer nx = x + dirDX(o);
+            integer ny = y + dirDY(o);
+            if (bOk(nx,ny)) {
+                integer nc = bGet(nx,ny);
+                integer nt = cType(nc);
+                if (nt != T_EMPTY && nt != T_HOLE && nt != T_HYPERHOLE) {
+                    if (!isStun && nt == T_KING) kr = "king:" + (string)cOwner(nc);
+                    applyHit(nx, ny, isStun);
+                }
+            }
+        }
+        if (!isStun) { bSet(x,y,0); pushCell(x,y); }   // laser also destroys the bomb
+    } else {
+        applyHit(x, y, isStun);   // side hit: bomb only
+    }
+    return kr;
+}
+
 // Trace a beam from weapon at (ox,oy). isStun => non-destructive (stun).
 // Returns "king:owner" if a King was struck by a (non-stun) beam, else "".
 string fireBeam(integer ox, integer oy, integer isStun) {
@@ -449,6 +548,10 @@ string fireBeam(integer ox, integer oy, integer isStun) {
             queue = [nx, ny, rr] + queue;
         } else if (res == "hit") {
             applyHit(nx, ny, isStun);
+        } else if (llGetSubString(res,0,3) == "bomb") {
+            integer center = (integer)llGetSubString(res,5,-1);
+            string kr = detonateBomb(nx, ny, center, isStun);
+            if (kr != "") result = kr;
         } else if (res == "king") {
             if (isStun) applyHit(nx, ny, 1);
             else result = "king:" + (string)cOwner(bGet(nx,ny));
@@ -468,6 +571,11 @@ doFire() {
         setStatus("Only a Laser or Stunner can fire.");
         return;
     }
+    integer idx = bIdx(gSelX, gSelY);
+    if (llListFindList(gFired, [idx]) >= 0) {
+        setStatus("That weapon already fired this turn.");
+        return;
+    }
     integer isStun = (t == T_STUNNER);
     string res = fireBeam(gSelX, gSelY, isStun);
 
@@ -480,6 +588,7 @@ doFire() {
         gState = GS_GAMEOVER;
         return;
     }
+    gFired += [idx];    // this weapon has fired this turn
     spendActions(1);    // firing costs one action
 }
 
@@ -491,11 +600,26 @@ doFire() {
 doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
     integer captured = bGet(tx, ty);
     integer mv = bGet(fx, fy);
+    integer fromIdx = bIdx(fx, fy);
+    integer toIdx = bIdx(tx, ty);
+    gRotIdx = []; gRotStart = []; gRotSpent = [];   // a move resets rotation refunds
+
+    // Moving onto the Hyper Hole displaces the mover to a random empty cell.
+    if (cType(captured) == T_HYPERHOLE) {
+        bSet(fx, fy, 0);
+        pushCell(fx, fy);
+        remapTracking(fromIdx, -1);
+        displacePiece(mv);
+        spendActions(cost);
+        return;
+    }
+
     bSet(tx, ty, mv);
     bSet(fx, fy, 0);
     pushCell(fx, fy);
     pushCell(tx, ty);
-    gRotIdx = []; gRotStart = []; gRotSpent = [];   // a move resets rotation refunds
+    remapTracking(fromIdx, toIdx);
+
     if (cType(captured) == T_KING) {
         integer winner = cOwner(mv);
         setStatus(playerName(winner) + " WINS by capture! Touch the board to restart.");
@@ -503,6 +627,7 @@ doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
         gState = GS_GAMEOVER;
         return;
     }
+    if (cType(captured) != T_EMPTY) gCaptured += [toIdx];  // used its capture this turn
     spendActions(cost);
 }
 
@@ -511,6 +636,7 @@ handleTouch(integer x, integer y) {
         initBoard();
         gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
         gState = GS_IDLE; gSelX = -1; gSelY = -1;
+        resetTurnState();
         clearHL(); broadcastBoard();
         announceTurn();
         return;
@@ -523,6 +649,10 @@ handleTouch(integer x, integer y) {
 
     if (gState == GS_IDLE || gState == GS_SELECTED) {
         if (t != T_EMPTY && !isFeature(t) && owner == gCurPlayer) {
+            if (cStun(cell)) {
+                setStatus("That piece is stunned — it can't act this turn.");
+                return;
+            }
             gSelX = x; gSelY = y;
             gState = GS_SELECTED;
             clearHL();
@@ -631,6 +761,7 @@ default {
                 initBoard();
                 gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
                 gState = GS_IDLE; gSelX = -1; gSelY = -1;
+                resetTurnState();
                 clearHL(); broadcastBoard();
                 announceTurn();
             }
