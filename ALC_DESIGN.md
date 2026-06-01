@@ -78,9 +78,10 @@ Index 0–7, clockwise from north:
 | 1 | CELL_UPDATE | →child | `"x,y,cell"` |
 | 2 | HIGHLIGHT | →child | `"x,y,on"` |
 | 3 | CLEAR_HL | →child | — |
-| 4 | LASER_PATH | →child | `"x0,y0;x1,y1;…"` (for FX/flash) |
+| 4 | LASER_PATH | →child | `"x0,y0;x1,y1;…"` (full path → laser_fx ribbon) |
 | 5 | GAME_OVER | →child | winner owner id |
 | 6 | STATUS | →child | status text |
+| 7 | BEAM | →child | `"x,y"` light a beam cell; `"x,y,HIT"` emphasized impact |
 | 10 | PIECE_TOUCH | child→ | `"x,y"` |
 | 11 | ACTION | both | action verb / `"MENU:x,y"` |
 | 20 | AI_REQUEST | →ai | `"boardCSV|player|actionsLeft"` |
@@ -115,6 +116,18 @@ Per-piece, given incoming travel dir `d`:
 **Friendly fire is real** and there is no firing-piece immunity — a returning beam
 can destroy/stun the piece that fired it. Splitter forks are traced DFS so each
 branch stays contiguous for the ribbon FX.
+
+### Fire playback (animation)
+
+Firing is **traced up front but applied late**, so the beam is watchable. `traceBeam`
+walks the path **without mutating the board**, recording the ordered cells (`gBeamCells`),
+the cells to hit on impact (`gPendingFx`), and any King hit (`gPendingKing`). `doFire`
+then enters state **`GS_FIRING`** (touches ignored) and a controller `timer()` plays it
+back via `BEAM` messages: the path lights cell-by-cell (`BEAM_STEP` s each — a growing
+trail that shows bounces), the struck cell(s) flash red and hold (`HIT_HOLD`), then the
+effects land (destroy/stun, bomb blast, King), the trail clears, and only then does the
+turn advance. AI shots animate identically (the AI's next action waits for impact). The
+full path is also sent once as `LASER_PATH` to the `laser_fx` ribbon prim.
 
 ## Special mechanics (Phase 3)
 
