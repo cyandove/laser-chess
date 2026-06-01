@@ -80,10 +80,13 @@ def laser(p):
     return a
 
 def stunner(p):
-    a = fill(sd_circle(p, (0,-0.2), 0.32))    # base
-    stem = [(-0.11,-0.2),(0.11,-0.2),(0.11,0.45),(-0.11,0.45)]
-    a = max(a, fill(sd_poly(p, stem)))        # stem
-    a = max(a, fill(sd_circle(p, (0,0.5), 0.3)))    # rounded head (lollipop)
+    # Directional: solid body at the back (south), a two-prong emitter "fork"
+    # at the front (north) so it's clear which end is the gun.
+    a = fill(sd_circle(p, (0,-0.4), 0.34))            # body
+    a = max(a, fill(sd_poly(p, [(-0.13,-0.4),(0.13,-0.4),(0.13,0.05),(-0.13,0.05)])))  # neck
+    a = max(a, stroke(sd_segment(p, (-0.22,0.0), (0.22,0.0)), 0.07))  # yoke
+    a = max(a, stroke(sd_segment(p, (-0.22,0.0), (-0.22,0.78)), 0.07)) # left prong
+    a = max(a, stroke(sd_segment(p, ( 0.22,0.0), ( 0.22,0.78)), 0.07)) # right prong
     return a
 
 def oneway(p):
@@ -95,9 +98,12 @@ def oneway(p):
     return a
 
 def trimir(p):
-    tri = [(-0.78,-0.78),(0.78,-0.78),(0.78,0.78)]  # right triangle, "/" hypotenuse
+    # Reflective edge faces the way the piece faces. At orient 0 (N) that edge
+    # is the flat TOP (facing up); the body/apex points the opposite way. The
+    # game rotates the texture for the other 7 facings.
+    tri = [(-0.78, 0.42), (0.78, 0.42), (0.78, -0.74)]  # right triangle, flat top
     a = fill(sd_poly(p, tri))
-    a = max(a, stroke(sd_segment(p, (-0.78,-0.78), (0.78,0.78)), 0.05))  # mirror edge
+    a = max(a, stroke(sd_segment(p, (-0.78,0.42), (0.78,0.42)), 0.08))  # bright mirror edge (N)
     return a
 
 def bomb(p):

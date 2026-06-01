@@ -51,6 +51,9 @@ key     gLastToucher = NULL_KEY;
 
 // Texture rotation per facing step. Flip the sign if pieces face the wrong way.
 float   TEX_ROT_SIGN = -1.0;
+// Which prim face is the top of your cell tiles (a default box's top = 0).
+// If the sprite shows on a side instead of the top, change this.
+integer TOP_FACE = 0;
 
 // Piece textures by type (index 0 = empty/blank). Paste your uploaded UUIDs
 // here; re-drop this script into the cells after changing them.
@@ -143,7 +146,9 @@ updateVisuals(integer cell) {
     // highlight, label as a supplement. One batched call.
     float texRot = (float)cOrient(cell) * PI * 0.25 * TEX_ROT_SIGN;
     llSetLinkPrimitiveParamsFast(LINK_THIS, [
-        PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
+        // blank every face, then put the (rotated) sprite on just the top face
+        PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
+        PRIM_TEXTURE, TOP_FACE,  llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
         PRIM_COLOR,   ALL_SIDES, col, a,
         PRIM_GLOW,    ALL_SIDES, glow,
         PRIM_TEXT,    label, <1,1,1>, 1.0 ]);
