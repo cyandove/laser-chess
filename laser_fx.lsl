@@ -125,7 +125,7 @@ default {
     changed(integer c) {
         if (c & (CHANGED_LINK | CHANGED_SCALE)) {
             gHome = llList2Vector(
-                llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POSITION]), 0);
+                llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POS_LOCAL]), 0);
             buildCellCache();
             measureSpacing();
         }
