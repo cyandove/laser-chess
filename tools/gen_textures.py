@@ -101,9 +101,12 @@ def trimir(p):
     # Reflective edge faces the way the piece faces. At orient 0 (N) that edge
     # is the flat TOP (facing up); the body/apex points the opposite way. The
     # game rotates the texture for the other 7 facings.
-    tri = [(-0.78, 0.42), (0.78, 0.42), (0.78, -0.74)]  # right triangle, flat top
-    a = fill(sd_poly(p, tri))
-    a = max(a, stroke(sd_segment(p, (-0.78,0.42), (0.78,0.42)), 0.08))  # bright mirror edge (N)
+    # Right angle at the bottom apex, so the HYPOTENUSE is the top edge = the
+    # mirror. At orient 0 (N) it's horizontal, facing N (the game rotates it for
+    # the other facings). The two slanted LEGS run down to the apex (the back).
+    A = (-0.8, 0.4); B = (0.8, 0.4); C = (0.0, -0.4)   # 90 deg at C
+    a = fill(sd_poly(p, [A, B, C]))
+    a = max(a, stroke(sd_segment(p, A, B), 0.11))      # emphasise the mirror (hypotenuse)
     return a
 
 def bomb(p):
