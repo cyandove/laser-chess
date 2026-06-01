@@ -29,6 +29,7 @@ integer LM_CLEAR_HL    = 3;
 integer LM_LASER_PATH  = 4;
 integer LM_GAME_OVER   = 5;
 integer LM_STATUS      = 6;
+integer LM_BEAM        = 7;
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 
@@ -130,10 +131,12 @@ setHighlight(integer on) {
     updateVisuals(gCurrentCell);
 }
 
-flashLaserHit() {
-    llSetColor(COLOR_LASER_HIT, ALL_SIDES);
-    llSleep(0.3);
-    updateVisuals(gCurrentCell);
+// Light this cell as part of the beam (no sleep — stays lit until the
+// controller pushes a normal cell update to clear it).
+beamLight(vector c) {
+    llSetLinkPrimitiveParamsFast(LINK_THIS, [
+        PRIM_COLOR, ALL_SIDES, c, 1.0,
+        PRIM_GLOW,  ALL_SIDES, 0.45 ]);
 }
 
 showActionDialog() {
@@ -191,13 +194,11 @@ default {
             return;
         }
         if (num == LM_CLEAR_HL) { setHighlight(FALSE); return; }
-        if (num == LM_LASER_PATH) {
-            list segs = llParseString2List(str, [";"], []);
-            integer i;
-            for (i=0; i<llGetListLength(segs); ++i) {
-                list xy = llParseString2List(llList2String(segs,i), [","], []);
-                if (llList2Integer(xy,0)==gMyX && llList2Integer(xy,1)==gMyY)
-                    flashLaserHit();
+        if (num == LM_BEAM) {
+            list p = llParseString2List(str, [","], []);
+            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY) {
+                if (llGetListLength(p) >= 3) beamLight(<1.0, 0.12, 0.05>); // HIT
+                else                         beamLight(COLOR_LASER_HIT);    // travel
             }
             return;
         }

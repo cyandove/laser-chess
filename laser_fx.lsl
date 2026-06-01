@@ -23,10 +23,10 @@ integer LM_LASER_PATH = 4;   // must match game_controller.lsl
 // ---- Beam look ----
 vector  BEAM_COL_START = <1.0, 0.25, 0.0>; // hot orange at the core
 vector  BEAM_COL_END   = <1.0, 0.85, 0.2>; // fading to yellow
-float   BEAM_SCALE     = 0.18;             // ribbon width (m)
-float   BEAM_AGE       = 0.6;              // particle lifetime (s)
-float   STEP_TIME      = 0.04;             // seconds per path point
-float   HOLD_TIME      = 0.30;             // linger after last point
+float   BEAM_SCALE     = 0.35;             // ribbon width (m) — wider, easier to see
+float   BEAM_AGE       = 1.4;              // particle lifetime (s) — lingers
+float   STEP_TIME      = 0.08;             // seconds per path point (matches BEAM_STEP)
+float   HOLD_TIME      = 0.60;             // linger after last point
 
 // ---- Cached geometry: strided ["x,y", <pos>, "x,y", <pos>, ...] ----
 list    gCellPos;
