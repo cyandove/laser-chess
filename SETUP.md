@@ -62,6 +62,30 @@ is a flat box lying horizontally and you use the top face.
 ## Piece colours
 
 Edit `piece.lsl` constants `COLOR_RED` / `COLOR_GREEN` to match your build palette.
+These tint the piece textures per owner.
+
+## Piece textures
+
+Pieces are drawn by texturing the cell prim (sprite by type, tinted by owner, rotated
+for facing). Until you supply textures, pieces show as **solid tinted tiles** with text
+labels — the game is fully playable like that.
+
+To use the sprites in `textures/` (see `textures/README.md`):
+
+1. Upload the twelve `textures/tex_*.png` in-world (L$10 each).
+2. In **`game_controller.lsl`**, paste each texture's UUID into the **`TEX`** list —
+   entries **1–12**, in the order shown (King, Laser, Stunner, One-Way, Triangular,
+   Bomb, Hypergon, Splitter, Partial-Oct, Full-Oct, Hole, Hyper-Hole). Leave entry 0
+   (empty) as the blank UUID.
+3. Re-drop `game_controller.lsl` into the root and Reset Scripts. The UUIDs live only in
+   the root, so you never edit the 165 cell scripts.
+
+Notes:
+- The sprites are **white on transparent**, so the owner tint shows the piece and the
+  background is see-through (the icon "floats" on the board). For solid tiles, give the
+  sprites an opaque background (regenerate with `tools/gen_textures.py`).
+- If a piece's **facing looks rotated the wrong way**, flip `TEX_ROT_SIGN` in `piece.lsl`
+  (1.0 ↔ -1.0).
 
 ## Turning the AI on/off
 
