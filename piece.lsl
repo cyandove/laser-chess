@@ -49,10 +49,26 @@ integer gHighlighted = FALSE;
 integer gCurrentCell = 0;
 key     gLastToucher = NULL_KEY;
 
-// Current cell texture (the root sends it per update). Blank = solid tile.
-string  gCurrentTex = "5748decc-f629-461c-9a36-a35a221fe21f";
 // Texture rotation per facing step. Flip the sign if pieces face the wrong way.
 float   TEX_ROT_SIGN = -1.0;
+
+// Piece textures by type (index 0 = empty/blank). Paste your uploaded UUIDs
+// here; re-drop this script into the cells after changing them.
+list TEX = [
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  0 empty (blank)
+    "b1b31d44-39a8-05a0-3a18-66c672980228", //  1 King       (tex_king)
+    "b7d6a241-2427-8c71-460e-581d82cbbbd4", //  2 Laser      (tex_laser)
+    "7198af09-2287-d0e1-01c7-0cdfc8f9418f", //  3 Stunner    (tex_stunner)
+    "f0aaca44-e8de-a032-7ebd-e33bd6c21918", //  4 One-Way    (tex_oneway)
+    "5fdb23e7-0347-87de-6ffb-089c9bd9a7cb", //  5 Triangular (tex_trimir)
+    "f536281c-f7d4-bb44-a296-f286d1178027", //  6 Bomb       (tex_bomb)
+    "7bd2294c-94aa-c365-27af-09ac6e8373e9", //  7 Hypergon   (tex_hypergon)
+    "7b979c02-7673-2539-04ab-20eb397465b8", //  8 Splitter   (tex_splitter)
+    "fe692b3b-01cc-52f2-023c-19d7faa4c465", //  9 Part. Oct  (tex_poct)
+    "b27697b1-5f64-533d-bffb-a5769de4003b", // 10 Full Oct   (tex_foct)
+    "b287b832-b2ac-344e-2e03-cb8455941117", // 11 Hole       (tex_hole)
+    "00139b4e-5d9d-b007-7bb7-c2ba560e0f80"  // 12 Hyper Hole (tex_hyperhole)
+];
 
 // ---- decode ----
 integer cType(integer c)   { return c % 100; }
@@ -127,7 +143,7 @@ updateVisuals(integer cell) {
     // highlight, label as a supplement. One batched call.
     float texRot = (float)cOrient(cell) * PI * 0.25 * TEX_ROT_SIGN;
     llSetLinkPrimitiveParamsFast(LINK_THIS, [
-        PRIM_TEXTURE, ALL_SIDES, gCurrentTex, <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
+        PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
         PRIM_COLOR,   ALL_SIDES, col, a,
         PRIM_GLOW,    ALL_SIDES, glow,
         PRIM_TEXT,    label, <1,1,1>, 1.0 ]);
@@ -161,7 +177,7 @@ showActionDialog() {
 default {
     state_entry() {
         parsePosition();
-        updateVisuals(0);   // blank empty cell (gCurrentTex defaults to blank)
+        updateVisuals(0);   // render the blank empty cell
     }
 
     touch_start(integer n) {
@@ -189,10 +205,8 @@ default {
 
         if (num == LM_CELL_UPDATE) {
             list p = llParseString2List(str, [","], []);
-            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY) {
-                gCurrentTex = llList2String(p,3);   // texture for this cell's type
+            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY)
                 updateVisuals(llList2Integer(p,2));
-            }
             return;
         }
         if (num == LM_HIGHLIGHT) {

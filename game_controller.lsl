@@ -130,35 +130,13 @@ integer dirDX(integer o) { return llList2Integer(DDX, o); }
 integer dirDY(integer o) { return llList2Integer(DDY, o); }
 
 // ============================================================
-// PIECE TEXTURES — paste your uploaded UUIDs here (index = piece type).
-// Until you do, pieces render as solid tinted tiles (the SL blank texture).
-// Upload textures/tex_*.png in-world, then replace entries 1..12 with their
-// UUIDs (see textures/README.md for the file->type mapping). The texture is
-// sent with each cell update; piece.lsl tints it by owner, rotates by facing.
-// ============================================================
-list TEX = [
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  0 empty (blank)
-    "b1b31d44-39a8-05a0-3a18-66c672980228", //  1 King       (tex_king)
-    "b7d6a241-2427-8c71-460e-581d82cbbbd4", //  2 Laser      (tex_laser)
-    "7198af09-2287-d0e1-01c7-0cdfc8f9418f", //  3 Stunner    (tex_stunner)
-    "f0aaca44-e8de-a032-7ebd-e33bd6c21918", //  4 One-Way    (tex_oneway)
-    "5fdb23e7-0347-87de-6ffb-089c9bd9a7cb", //  5 Triangular (tex_trimir)
-    "f536281c-f7d4-bb44-a296-f286d1178027", //  6 Bomb       (tex_bomb)
-    "7bd2294c-94aa-c365-27af-09ac6e8373e9", //  7 Hypergon   (tex_hypergon)
-    "7b979c02-7673-2539-04ab-20eb397465b8", //  8 Splitter   (tex_splitter)
-    "fe692b3b-01cc-52f2-023c-19d7faa4c465", //  9 Part. Oct  (tex_poct)
-    "b27697b1-5f64-533d-bffb-a5769de4003b", // 10 Full Oct   (tex_foct)
-    "b287b832-b2ac-344e-2e03-cb8455941117", // 11 Hole       (tex_hole)
-    "00139b4e-5d9d-b007-7bb7-c2ba560e0f80"  // 12 Hyper Hole (tex_hyperhole)
-];
-
-// ============================================================
 // MESSAGING
 // ============================================================
+// (Piece-texture UUIDs live in piece.lsl's TEX list — the cell scripts have
+// the spare memory, and they already decode the piece type for rendering.)
 pushCell(integer x, integer y) {
-    integer c = bGet(x,y);
     llMessageLinked(LINK_ALL_CHILDREN, LM_CELL_UPDATE,
-        (string)x+","+(string)y+","+(string)c+","+llList2String(TEX, cType(c)), NULL_KEY);
+        (string)x+","+(string)y+","+(string)bGet(x,y), NULL_KEY);
 }
 setStatus(string s) {
     llMessageLinked(LINK_ALL_CHILDREN, LM_STATUS, s, NULL_KEY);
@@ -561,7 +539,7 @@ traceBeam(integer ox, integer oy, integer isStun) {
     integer startDir = cOrient(bGet(ox,oy));
     list queue = [ox, oy, startDir];        // DFS: pop front, prepend
     list visited = [];
-    integer maxSteps = 400;
+    integer maxSteps = 256;
 
     while (llGetListLength(queue) >= 3 && maxSteps > 0) {
         --maxSteps;
@@ -574,7 +552,7 @@ traceBeam(integer ox, integer oy, integer isStun) {
         integer ny = cy + dirDY(cd);
         if (!bOk(nx,ny)) jump nxt;
 
-        string vkey = (string)nx+","+(string)ny+","+(string)cd;
+        integer vkey = (ny*BOARD_W + nx)*8 + cd;  // packed (cell,dir) — compact
         if (llListFindList(visited,[vkey]) >= 0) jump nxt;
         visited += [vkey];
 
@@ -677,6 +655,7 @@ beamTick() {
     llSetTimerEvent(0.0);
     applyPendingFx();
     clearTrail();
+    gBeamCells = []; gPendingFx = [];   // free the trace memory
 
     if (!gFireIsStun && gPendingKing != "") {
         integer loser  = (integer)llGetSubString(gPendingKing,5,-1);

@@ -73,12 +73,15 @@ labels — the game is fully playable like that.
 To use the sprites in `textures/` (see `textures/README.md`):
 
 1. Upload the twelve `textures/tex_*.png` in-world (L$10 each).
-2. In **`game_controller.lsl`**, paste each texture's UUID into the **`TEX`** list —
-   entries **1–12**, in the order shown (King, Laser, Stunner, One-Way, Triangular,
-   Bomb, Hypergon, Splitter, Partial-Oct, Full-Oct, Hole, Hyper-Hole). Leave entry 0
-   (empty) as the blank UUID.
-3. Re-drop `game_controller.lsl` into the root and Reset Scripts. The UUIDs live only in
-   the root, so you never edit the 165 cell scripts.
+2. In **`piece.lsl`**, paste each texture's UUID into the **`TEX`** list — entries
+   **1–12**, in the order shown (King, Laser, Stunner, One-Way, Triangular, Bomb,
+   Hypergon, Splitter, Partial-Oct, Full-Oct, Hole, Hyper-Hole). Leave entry 0 (empty)
+   as the blank UUID.
+3. Put the updated `piece.lsl` in your `lc_cell` template (or drop it into all cells via
+   "Edit Linked" / select-all) and **Reset Scripts**.
+
+> The `TEX` table lives in `piece.lsl` (not the controller) on purpose: the controller is
+> near the 64 KB script-memory limit, and the cell scripts have the spare room.
 
 Notes:
 - The sprites are **white on transparent**, so the owner tint shows the piece and the
