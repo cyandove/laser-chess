@@ -49,6 +49,11 @@ integer gHighlighted = FALSE;
 integer gCurrentCell = 0;
 key     gLastToucher = NULL_KEY;
 
+// Current cell texture (the root sends it per update). Blank = solid tile.
+string  gCurrentTex = "5748decc-f629-461c-9a36-a35a221fe21f";
+// Texture rotation per facing step. Flip the sign if pieces face the wrong way.
+float   TEX_ROT_SIGN = -1.0;
+
 // ---- decode ----
 integer cType(integer c)   { return c % 100; }
 integer cOwner(integer c)  { return (c / 100) % 10; }
@@ -118,11 +123,14 @@ updateVisuals(integer cell) {
         if (t == T_EMPTY) { col = COLOR_HIGHLIGHT; a = 1.0; }
     }
 
-    // One batched call is cheaper than separate color/alpha/glow/text calls.
+    // Texture rotated to show the piece's facing, tinted by owner, glow for
+    // highlight, label as a supplement. One batched call.
+    float texRot = (float)cOrient(cell) * PI * 0.25 * TEX_ROT_SIGN;
     llSetLinkPrimitiveParamsFast(LINK_THIS, [
-        PRIM_COLOR, ALL_SIDES, col, a,
-        PRIM_GLOW,  ALL_SIDES, glow,
-        PRIM_TEXT,  label, <1,1,1>, 1.0 ]);
+        PRIM_TEXTURE, ALL_SIDES, gCurrentTex, <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
+        PRIM_COLOR,   ALL_SIDES, col, a,
+        PRIM_GLOW,    ALL_SIDES, glow,
+        PRIM_TEXT,    label, <1,1,1>, 1.0 ]);
 }
 
 setHighlight(integer on) {
@@ -153,9 +161,7 @@ showActionDialog() {
 default {
     state_entry() {
         parsePosition();
-        llSetColor(COLOR_EMPTY, ALL_SIDES);
-        llSetAlpha(0.3, ALL_SIDES);
-        llSetText("", <1,1,1>, 0.0);
+        updateVisuals(0);   // blank empty cell (gCurrentTex defaults to blank)
     }
 
     touch_start(integer n) {
@@ -183,8 +189,10 @@ default {
 
         if (num == LM_CELL_UPDATE) {
             list p = llParseString2List(str, [","], []);
-            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY)
+            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY) {
+                gCurrentTex = llList2String(p,3);   // texture for this cell's type
                 updateVisuals(llList2Integer(p,2));
+            }
             return;
         }
         if (num == LM_HIGHLIGHT) {

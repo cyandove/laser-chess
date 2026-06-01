@@ -130,11 +130,35 @@ integer dirDX(integer o) { return llList2Integer(DDX, o); }
 integer dirDY(integer o) { return llList2Integer(DDY, o); }
 
 // ============================================================
+// PIECE TEXTURES — paste your uploaded UUIDs here (index = piece type).
+// Until you do, pieces render as solid tinted tiles (the SL blank texture).
+// Upload textures/tex_*.png in-world, then replace entries 1..12 with their
+// UUIDs (see textures/README.md for the file->type mapping). The texture is
+// sent with each cell update; piece.lsl tints it by owner, rotates by facing.
+// ============================================================
+list TEX = [
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  0 empty (blank)
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  1 King       <- tex_king
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  2 Laser      <- tex_laser
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  3 Stunner    <- tex_stunner
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  4 One-Way    <- tex_oneway
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  5 Triangular <- tex_trimir
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  6 Bomb       <- tex_bomb
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  7 Hypergon   <- tex_hypergon
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  8 Splitter   <- tex_splitter
+    "5748decc-f629-461c-9a36-a35a221fe21f", //  9 Part. Oct  <- tex_poct
+    "5748decc-f629-461c-9a36-a35a221fe21f", // 10 Full Oct   <- tex_foct
+    "5748decc-f629-461c-9a36-a35a221fe21f", // 11 Hole       <- tex_hole
+    "5748decc-f629-461c-9a36-a35a221fe21f"  // 12 Hyper Hole <- tex_hyperhole
+];
+
+// ============================================================
 // MESSAGING
 // ============================================================
 pushCell(integer x, integer y) {
+    integer c = bGet(x,y);
     llMessageLinked(LINK_ALL_CHILDREN, LM_CELL_UPDATE,
-        (string)x+","+(string)y+","+(string)bGet(x,y), NULL_KEY);
+        (string)x+","+(string)y+","+(string)c+","+llList2String(TEX, cType(c)), NULL_KEY);
 }
 setStatus(string s) {
     llMessageLinked(LINK_ALL_CHILDREN, LM_STATUS, s, NULL_KEY);
