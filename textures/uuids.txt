@@ -1,5 +1,5 @@
 tex_trimir
-5fdb23e7-0347-87de-6ffb-089c9bd9a7cb
+702f8ffa-4f49-b9d8-30d1-c160b5925bae
 
 tex_poct
 fe692b3b-01cc-52f2-023c-19d7faa4c465
@@ -8,7 +8,7 @@ tex_splitter
 7b979c02-7673-2539-04ab-20eb397465b8
 
 tex_stunner
-7198af09-2287-d0e1-01c7-0cdfc8f9418f
+60387018-dfe7-f04f-075b-a902207bcbf9
 
 tex_king
 b1b31d44-39a8-05a0-3a18-66c672980228
