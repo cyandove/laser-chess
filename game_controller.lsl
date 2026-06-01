@@ -138,18 +138,18 @@ integer dirDY(integer o) { return llList2Integer(DDY, o); }
 // ============================================================
 list TEX = [
     "5748decc-f629-461c-9a36-a35a221fe21f", //  0 empty (blank)
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  1 King       <- tex_king
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  2 Laser      <- tex_laser
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  3 Stunner    <- tex_stunner
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  4 One-Way    <- tex_oneway
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  5 Triangular <- tex_trimir
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  6 Bomb       <- tex_bomb
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  7 Hypergon   <- tex_hypergon
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  8 Splitter   <- tex_splitter
-    "5748decc-f629-461c-9a36-a35a221fe21f", //  9 Part. Oct  <- tex_poct
-    "5748decc-f629-461c-9a36-a35a221fe21f", // 10 Full Oct   <- tex_foct
-    "5748decc-f629-461c-9a36-a35a221fe21f", // 11 Hole       <- tex_hole
-    "5748decc-f629-461c-9a36-a35a221fe21f"  // 12 Hyper Hole <- tex_hyperhole
+    "b1b31d44-39a8-05a0-3a18-66c672980228", //  1 King       (tex_king)
+    "b7d6a241-2427-8c71-460e-581d82cbbbd4", //  2 Laser      (tex_laser)
+    "7198af09-2287-d0e1-01c7-0cdfc8f9418f", //  3 Stunner    (tex_stunner)
+    "f0aaca44-e8de-a032-7ebd-e33bd6c21918", //  4 One-Way    (tex_oneway)
+    "5fdb23e7-0347-87de-6ffb-089c9bd9a7cb", //  5 Triangular (tex_trimir)
+    "f536281c-f7d4-bb44-a296-f286d1178027", //  6 Bomb       (tex_bomb)
+    "7bd2294c-94aa-c365-27af-09ac6e8373e9", //  7 Hypergon   (tex_hypergon)
+    "7b979c02-7673-2539-04ab-20eb397465b8", //  8 Splitter   (tex_splitter)
+    "fe692b3b-01cc-52f2-023c-19d7faa4c465", //  9 Part. Oct  (tex_poct)
+    "b27697b1-5f64-533d-bffb-a5769de4003b", // 10 Full Oct   (tex_foct)
+    "b287b832-b2ac-344e-2e03-cb8455941117", // 11 Hole       (tex_hole)
+    "00139b4e-5d9d-b007-7bb7-c2ba560e0f80"  // 12 Hyper Hole (tex_hyperhole)
 ];
 
 // ============================================================
