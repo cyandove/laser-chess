@@ -497,8 +497,8 @@ applyHit(integer x, integer y, integer isStun) {
 
 // Queue a cell to be hit when the beam arrives (deduped).
 addFx(integer x, integer y) {
-    string key = (string)x + "," + (string)y;
-    if (llListFindList(gPendingFx, [key]) < 0) gPendingFx += [key];
+    string cellKey = (string)x + "," + (string)y;
+    if (llListFindList(gPendingFx, [cellKey]) < 0) gPendingFx += [cellKey];
 }
 
 // Queue a bomb's effect (no mutation yet). center=1 -> the 8 neighbours (+ the
