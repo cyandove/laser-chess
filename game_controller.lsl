@@ -53,6 +53,7 @@ integer LM_CLEAR_HL    = 3;
 integer LM_LASER_PATH  = 4;
 integer LM_GAME_OVER   = 5;
 integer LM_STATUS      = 6;
+integer LM_BEAM        = 7;   // "x,y" -> light a beam cell; "x,y,HIT" -> emphasized
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 integer LM_AI_REQUEST  = 20;
@@ -64,8 +65,13 @@ integer GS_IDLE     = 0;
 integer GS_SELECTED = 1;
 integer GS_AWAIT_DST= 2;
 integer GS_GAMEOVER = 3;
+integer GS_FIRING   = 4;   // beam animation playing; input ignored
 
 integer ACTIONS_PER_TURN = 3;
+
+// Beam animation tunables
+float   BEAM_STEP = 0.08;   // seconds per cell as the beam travels
+float   HIT_HOLD  = 0.55;   // emphasis hold on the struck cell(s)
 
 // ---- state ----
 list    gBoard;
@@ -84,6 +90,13 @@ integer gAIPlayer;
 list    gRotIdx;
 list    gRotStart;
 list    gRotSpent;
+
+// Beam animation state (a shot is traced up front, then played back).
+list    gBeamCells;     // ordered "x,y" cells the beam passes through
+list    gPendingFx;     // "x,y" cells to destroy/stun when the beam arrives
+string  gPendingKing;   // "king:owner" if a laser beam reaches a King, else ""
+integer gFireIsStun;    // current shot is a stunner
+integer gBeamStep;      // reveal index into gBeamCells
 
 // Per-turn caps: board indices of pieces that have fired / captured this turn.
 list    gFired;
@@ -482,38 +495,46 @@ applyHit(integer x, integer y, integer isStun) {
     pushCell(x, y);
 }
 
-// Detonate a bomb at (x,y). center=1 -> affect the 8 neighbours (+ destroy the
-// bomb for a laser); center=0 -> bomb only. Returns "king:owner" if a non-stun
-// blast destroyed a King, else "".
-string detonateBomb(integer x, integer y, integer center, integer isStun) {
-    string kr = "";
+// Queue a cell to be hit when the beam arrives (deduped).
+addFx(integer x, integer y) {
+    string cellKey = (string)x + "," + (string)y;
+    if (llListFindList(gPendingFx, [cellKey]) < 0) gPendingFx += [cellKey];
+}
+
+// Queue a bomb's effect (no mutation yet). center=1 -> the 8 neighbours (+ the
+// bomb itself for a laser); center=0 -> bomb only. A King neighbour (laser)
+// sets gPendingKing.
+queueBomb(integer x, integer y, integer center) {
     if (center) {
         integer o;
         for (o=0; o<8; ++o) {
             integer nx = x + dirDX(o);
             integer ny = y + dirDY(o);
             if (bOk(nx,ny)) {
-                integer nc = bGet(nx,ny);
-                integer nt = cType(nc);
+                integer nt = cType(bGet(nx,ny));
                 if (nt != T_EMPTY && nt != T_HOLE && nt != T_HYPERHOLE) {
-                    if (!isStun && nt == T_KING) kr = "king:" + (string)cOwner(nc);
-                    applyHit(nx, ny, isStun);
+                    if (!gFireIsStun && nt == T_KING)
+                        gPendingKing = "king:" + (string)cOwner(bGet(nx,ny));
+                    addFx(nx, ny);
                 }
             }
         }
-        if (!isStun) { bSet(x,y,0); pushCell(x,y); }   // laser also destroys the bomb
+        if (!gFireIsStun) addFx(x, y);   // laser also destroys the bomb
     } else {
-        applyHit(x, y, isStun);   // side hit: bomb only
+        addFx(x, y);                     // side hit: bomb only
     }
-    return kr;
 }
 
-// Trace a beam from weapon at (ox,oy). isStun => non-destructive (stun).
-// Returns "king:owner" if a King was struck by a (non-stun) beam, else "".
-string fireBeam(integer ox, integer oy, integer isStun) {
+// Trace a beam from weapon at (ox,oy) WITHOUT mutating the board. Fills
+// gBeamCells (ordered path), gPendingFx (cells to destroy/stun on impact) and
+// gPendingKing. The board only changes later, when the beam reaches its target.
+traceBeam(integer ox, integer oy, integer isStun) {
+    gBeamCells   = [(string)ox + "," + (string)oy];
+    gPendingFx   = [];
+    gPendingKing = "";
+    gFireIsStun  = isStun;
+
     integer startDir = cOrient(bGet(ox,oy));
-    string path = (string)ox + "," + (string)oy;
-    string result = "";
     list queue = [ox, oy, startDir];        // DFS: pop front, prepend
     list visited = [];
     integer maxSteps = 400;
@@ -533,7 +554,7 @@ string fireBeam(integer ox, integer oy, integer isStun) {
         if (llListFindList(visited,[vkey]) >= 0) jump nxt;
         visited += [vkey];
 
-        path += ";" + (string)nx + "," + (string)ny;
+        gBeamCells += [(string)nx + "," + (string)ny];
         string res = laserInteract(nx, ny, cd);
 
         if (res == "pass") {
@@ -550,24 +571,39 @@ string fireBeam(integer ox, integer oy, integer isStun) {
             integer rr = (integer)llFrand(8.0);
             queue = [nx, ny, rr] + queue;
         } else if (res == "hit") {
-            applyHit(nx, ny, isStun);
+            addFx(nx, ny);
         } else if (llGetSubString(res,0,3) == "bomb") {
-            integer center = (integer)llGetSubString(res,5,-1);
-            string kr = detonateBomb(nx, ny, center, isStun);
-            if (kr != "") result = kr;
+            queueBomb(nx, ny, (integer)llGetSubString(res,5,-1));
         } else if (res == "king") {
-            if (isStun) applyHit(nx, ny, 1);
-            else result = "king:" + (string)cOwner(bGet(nx,ny));
+            addFx(nx, ny);   // King cell gets the hit (emphasized; removed on a laser)
+            if (!isStun) gPendingKing = "king:" + (string)cOwner(bGet(nx,ny));
         }
         // "absorb" -> beam ends here
 
         @nxt;
     }
-
-    llMessageLinked(LINK_ALL_CHILDREN, LM_LASER_PATH, path, NULL_KEY);
-    return result;
 }
 
+// Apply the queued effects (called when the beam reaches its target).
+applyPendingFx() {
+    integer i;
+    for (i=0; i<llGetListLength(gPendingFx); ++i) {
+        list xy = llParseString2List(llList2String(gPendingFx,i), [","], []);
+        applyHit(llList2Integer(xy,0), llList2Integer(xy,1), gFireIsStun);
+    }
+}
+
+// Revert every cell the beam lit back to its normal render.
+clearTrail() {
+    integer i;
+    for (i=0; i<llGetListLength(gBeamCells); ++i) {
+        list xy = llParseString2List(llList2String(gBeamCells,i), [","], []);
+        pushCell(llList2Integer(xy,0), llList2Integer(xy,1));
+    }
+}
+
+// Fire the selected weapon: trace the shot, then PLAY IT BACK over time.
+// The board isn't touched until the beam reaches its target (see beamTick).
 doFire() {
     integer t = cType(bGet(gSelX, gSelY));
     if (t != T_LASER && t != T_STUNNER) {
@@ -580,10 +616,46 @@ doFire() {
         return;
     }
     integer isStun = (t == T_STUNNER);
-    string res = fireBeam(gSelX, gSelY, isStun);
+    traceBeam(gSelX, gSelY, isStun);
+    gFired += [idx];        // this weapon has fired this turn
 
-    if (!isStun && llGetSubString(res,0,3) == "king") {
-        integer loser  = (integer)llGetSubString(res,5,-1);
+    clearHL();
+    gState = GS_FIRING;     // ignore input while the beam plays
+    gBeamStep = 0;
+    setStatus(playerName(gCurPlayer) + " fires…");
+    // hand the full path to the ribbon FX prim (laser_fx.lsl)
+    llMessageLinked(LINK_ALL_CHILDREN, LM_LASER_PATH,
+        llDumpList2String(gBeamCells, ";"), NULL_KEY);
+    llSetTimerEvent(BEAM_STEP);
+}
+
+// One step of the beam playback (driven by the controller timer).
+beamTick() {
+    integer n = llGetListLength(gBeamCells);
+
+    if (gBeamStep < n) {                 // travel: light the next cell
+        llMessageLinked(LINK_ALL_CHILDREN, LM_BEAM,
+            llList2String(gBeamCells, gBeamStep), NULL_KEY);
+        ++gBeamStep;
+        return;
+    }
+    if (gBeamStep == n) {                // arrived: emphasize the struck cell(s)
+        integer i;
+        for (i=0; i<llGetListLength(gPendingFx); ++i)
+            llMessageLinked(LINK_ALL_CHILDREN, LM_BEAM,
+                llList2String(gPendingFx,i) + ",HIT", NULL_KEY);
+        ++gBeamStep;
+        llSetTimerEvent(HIT_HOLD);
+        return;
+    }
+
+    // finish: stop the timer, land the effects, clear the trail, advance.
+    llSetTimerEvent(0.0);
+    applyPendingFx();
+    clearTrail();
+
+    if (!gFireIsStun && gPendingKing != "") {
+        integer loser  = (integer)llGetSubString(gPendingKing,5,-1);
         integer winner = P_RED;
         if (loser == P_RED) winner = P_GREEN;
         setStatus(playerName(winner) + " WINS! Touch the board to restart.");
@@ -591,8 +663,7 @@ doFire() {
         gState = GS_GAMEOVER;
         return;
     }
-    gFired += [idx];    // this weapon has fired this turn
-    spendActions(1);    // firing costs one action
+    spendActions(1);       // firing costs one action; advances the turn
 }
 
 // ============================================================
@@ -635,7 +706,9 @@ doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
 }
 
 handleTouch(integer x, integer y) {
+    if (gState == GS_FIRING) return;            // ignore touches while a beam plays
     if (gState == GS_GAMEOVER) {
+        llSetTimerEvent(0.0);
         initBoard();
         gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
         gState = GS_IDLE; gSelX = -1; gSelY = -1;
@@ -750,6 +823,8 @@ default {
         if (bOk(bx, by)) handleTouch(bx, by);
     }
 
+    timer() { beamTick(); }   // drives the laser beam playback
+
     link_message(integer sender_num, integer num, string str, key id) {
         if (num == LM_PIECE_TOUCH) {
             list xy = llParseString2List(str, [","], []);
@@ -768,6 +843,7 @@ default {
             else if (str == "AI_RED")  gAIPlayer  = P_RED;
             else if (str == "AI_GREEN")gAIPlayer  = P_GREEN;
             else if (str == "RESET") {
+                llSetTimerEvent(0.0);   // cancel any beam in flight
                 initBoard();
                 gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
                 gState = GS_IDLE; gSelX = -1; gSelY = -1;

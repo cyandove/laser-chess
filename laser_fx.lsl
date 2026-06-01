@@ -7,8 +7,8 @@
 //
 // HOW IT WORKS:
 //   1. At start-up it scans the linkset for prims named cell_X_Y and
-//      caches each one's region position. (Run this AFTER the board is
-//      built/positioned by builder_layout.lsl.)
+//      caches each one's LOCAL position (relative to root). Reset this
+//      script AFTER the board cells are named/positioned so the cache fills.
 //   2. On LM_LASER_PATH it converts the path's cell coords to world
 //      points and sweeps this prim through them with a ribbon particle
 //      system running, leaving a connected beam. Then it parks itself
@@ -23,10 +23,10 @@ integer LM_LASER_PATH = 4;   // must match game_controller.lsl
 // ---- Beam look ----
 vector  BEAM_COL_START = <1.0, 0.25, 0.0>; // hot orange at the core
 vector  BEAM_COL_END   = <1.0, 0.85, 0.2>; // fading to yellow
-float   BEAM_SCALE     = 0.18;             // ribbon width (m)
-float   BEAM_AGE       = 0.6;              // particle lifetime (s)
-float   STEP_TIME      = 0.04;             // seconds per path point
-float   HOLD_TIME      = 0.30;             // linger after last point
+float   BEAM_SCALE     = 0.35;             // ribbon width (m) — wider, easier to see
+float   BEAM_AGE       = 1.4;              // particle lifetime (s) — lingers
+float   STEP_TIME      = 0.08;             // seconds per path point (matches BEAM_STEP)
+float   HOLD_TIME      = 0.60;             // linger after last point
 
 // ---- Cached geometry: strided ["x,y", <pos>, "x,y", <pos>, ...] ----
 list    gCellPos;
@@ -34,7 +34,7 @@ list    gCellPos;
 // ---- Sweep state ----
 list    gBeamPts;        // list of world-space vectors for current shot
 integer gStep;           // index into gBeamPts
-vector  gHome;           // this prim's resting region position
+vector  gHome;           // this prim's resting local position (rel. to root)
 float   gCellSpacing = 1.0; // world distance between adjacent cells
 
 // ============================================================
@@ -50,8 +50,10 @@ buildCellCache() {
             list parts = llParseString2List(nm, ["_"], []);
             if (llGetListLength(parts) >= 3) {
                 string xy = llList2String(parts, 1) + "," + llList2String(parts, 2);
+                // LOCAL position (relative to root) — reliable for child prims,
+                // unlike PRIM_POSITION which can't be set on a child via SLPPF.
                 vector p = llList2Vector(
-                    llGetLinkPrimitiveParams(i, [PRIM_POSITION]), 0);
+                    llGetLinkPrimitiveParams(i, [PRIM_POS_LOCAL]), 0);
                 gCellPos += [xy, p];
             }
         }
@@ -102,9 +104,10 @@ stopRibbon() {
     llParticleSystem([]);
 }
 
-// Move this prim to a region point via the root link (we are a child)
-moveTo(vector regionPos) {
-    llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_POSITION, regionPos]);
+// Move this prim to a LOCAL point (relative to root). PRIM_POS_LOCAL is the
+// reliable child-prim positioner; PRIM_POSITION can't be set on a child here.
+moveTo(vector localPos) {
+    llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_POS_LOCAL, localPos]);
 }
 
 default {
@@ -113,7 +116,7 @@ default {
         // Hide the emitter prim itself — only the particles should show.
         llSetLinkAlpha(LINK_THIS, 0.0, ALL_SIDES);
         gHome = llList2Vector(
-            llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POSITION]), 0);
+            llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POS_LOCAL]), 0);
         buildCellCache();
         measureSpacing();
     }
@@ -122,7 +125,7 @@ default {
     changed(integer c) {
         if (c & (CHANGED_LINK | CHANGED_SCALE)) {
             gHome = llList2Vector(
-                llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POSITION]), 0);
+                llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POS_LOCAL]), 0);
             buildCellCache();
             measureSpacing();
         }
