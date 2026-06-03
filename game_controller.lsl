@@ -148,10 +148,12 @@ hlCell(integer x, integer y, integer on) {
         (string)x+","+(string)y+","+(string)on, NULL_KEY);
 }
 broadcastBoard() {
+    // Push EVERY cell (not just occupied) so a full re-render clears/morphs
+    // cells that became empty — otherwise a stale sculptie/texture lingers.
     integer x; integer y;
     for (y=0; y<BOARD_H; ++y)
         for (x=0; x<BOARD_W; ++x)
-            if (bGet(x,y)) pushCell(x, y);
+            pushCell(x, y);
 }
 
 // Arrange every `cell_X_Y` child to its grid slot by NAME, relative to the

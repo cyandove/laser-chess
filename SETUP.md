@@ -90,6 +90,25 @@ Notes:
 - If a piece's **facing looks rotated the wrong way**, flip `TEX_ROT_SIGN` in `piece.lsl`
   (1.0 ↔ -1.0).
 
+## Sculptie pieces (optional 3D)
+
+Pieces can be shown as **3D sculpties** instead of flat textures. Each cell prim morphs:
+a piece with a sculpt map becomes a sculptie; empty squares (and pieces without a map yet)
+stay flat tiles. So you can add 3D pieces one type at a time and mix them with textured ones.
+
+1. Upload the maps in `sculpties/` (e.g. `king_sculptmap.png`, `foct_sculptmap.png`) with
+   **"Use lossless compression"** checked.
+2. In **`piece.lsl`**, paste each map's UUID into the **`SCULPT`** list (same type indices as
+   `TEX` — King = 1, Full-Oct = 10, …). Leave a type `""` to keep its flat texture.
+3. Re-drop `piece.lsl` into the cells and **Reset Scripts**.
+
+The script tints sculpties red/green by owner and **rotates the prim** to show facing.
+Tuning knobs in `piece.lsl`:
+- `SCULPT_SIZE` — per-type prim size `<x,y,z>` (the maps fill `[-1,1]`; make tokens taller in Z).
+- `SCULPT_STITCH` — stitching type (Cylinder for the current maps; see `sculpties/README.md`).
+- `SCULPT_ROT_SIGN` — flip if a piece faces the wrong way.
+- `SCULPT_BASE_Z` / `CELL_ZOFF` / `TILE_SIZE` — how tokens sit on the board vs. the flat tiles.
+
 ## Turning the AI on/off
 
 From any prim or external HUD, send on the config channel (num 100):

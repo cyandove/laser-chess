@@ -73,6 +73,48 @@ list TEX = [
     "00139b4e-5d9d-b007-7bb7-c2ba560e0f80"  // 12 Hyper Hole (tex_hyperhole)
 ];
 
+// 3D sculptie maps by type ("" = none -> the piece uses the flat texture above).
+// Upload sculpties/*_sculptmap.png with LOSSLESS compression, set the Stitching
+// from sculpties/README.md, then paste the map UUIDs here and re-drop this script.
+list SCULPT = [
+    "",  //  0 empty
+    "",  //  1 King       (king_sculptmap, Cylinder)  <- paste UUID
+    "",  //  2 Laser
+    "",  //  3 Stunner
+    "",  //  4 One-Way
+    "",  //  5 Triangular
+    "",  //  6 Bomb
+    "",  //  7 Hypergon
+    "",  //  8 Splitter
+    "",  //  9 Part. Oct
+    "",  // 10 Full Oct   (foct_sculptmap, Cylinder)  <- paste UUID
+    "",  // 11 Hole
+    ""   // 12 Hyper Hole
+];
+
+// Per-type sculptie prim size <x,y,z> (the maps fill [-1,1]; tune per piece).
+list SCULPT_SIZE = [
+    <0.80,0.80,0.50>,  //  0 (unused)
+    <0.70,0.70,1.00>,  //  1 King (taller)
+    <0.80,0.80,0.70>,  //  2 Laser
+    <0.80,0.80,0.70>,  //  3 Stunner
+    <0.80,0.80,0.60>,  //  4 One-Way
+    <0.80,0.80,0.60>,  //  5 Triangular
+    <0.80,0.80,0.70>,  //  6 Bomb
+    <0.80,0.80,0.70>,  //  7 Hypergon
+    <0.80,0.80,0.60>,  //  8 Splitter
+    <0.85,0.85,0.70>,  //  9 Part. Oct
+    <0.85,0.85,0.80>,  // 10 Full Oct
+    <0.80,0.80,0.40>,  // 11 Hole
+    <0.80,0.80,0.40>   // 12 Hyper Hole
+];
+
+integer SCULPT_STITCH  = PRIM_SCULPT_TYPE_CYLINDER; // both maps; add a per-type list if needed
+float   SCULPT_ROT_SIGN = -1.0;     // facing-rotation direction (flip if pieces face wrong way)
+vector  TILE_SIZE       = <1.0, 1.0, 0.05>;  // the flat cell tile (empty / textured pieces)
+float   CELL_ZOFF       = 0.05;     // local Z of the cell tiles (match game_controller)
+float   SCULPT_BASE_Z   = 0.05;     // local Z the sculptie tokens stand on
+
 // ---- decode ----
 integer cType(integer c)   { return c % 100; }
 integer cOwner(integer c)  { return (c / 100) % 10; }
@@ -142,16 +184,42 @@ updateVisuals(integer cell) {
         if (t == T_EMPTY) { col = COLOR_HIGHLIGHT; a = 1.0; }
     }
 
-    // Texture rotated to show the piece's facing, tinted by owner, glow for
-    // highlight, label as a supplement. One batched call.
-    float texRot = (float)cOrient(cell) * PI * 0.25 * TEX_ROT_SIGN;
-    llSetLinkPrimitiveParamsFast(LINK_THIS, [
-        // blank every face, then put the (rotated) sprite on just the top face
-        PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
-        PRIM_TEXTURE, TOP_FACE,  llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
-        PRIM_COLOR,   ALL_SIDES, col, a,
-        PRIM_GLOW,    ALL_SIDES, glow,
-        PRIM_TEXT,    label, <1,1,1>, 1.0 ]);
+    // Keep the cell's grid XY (owned by the controller's layoutCells); we only
+    // adjust Z / size / type / rotation here.
+    vector lp = llList2Vector(llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POS_LOCAL]), 0);
+
+    string sc = "";
+    if (t != T_EMPTY) sc = llList2String(SCULPT, t);
+
+    if (sc != "") {
+        // 3D sculptie piece: morph the prim and rotate it to face its orientation.
+        vector sz = llList2Vector(SCULPT_SIZE, t);
+        rotation rot = llAxisAngle2Rot(<0.0,0.0,1.0>,
+            (float)cOrient(cell) * PI * 0.25 * SCULPT_ROT_SIGN);
+        llSetLinkPrimitiveParamsFast(LINK_THIS, [
+            PRIM_TYPE, PRIM_TYPE_SCULPT, sc, SCULPT_STITCH,
+            PRIM_SIZE, sz,
+            PRIM_POS_LOCAL, <lp.x, lp.y, SCULPT_BASE_Z + sz.z * 0.5>,
+            PRIM_ROT_LOCAL, rot,
+            PRIM_COLOR, ALL_SIDES, col, a,
+            PRIM_GLOW,  ALL_SIDES, glow,
+            PRIM_TEXT,  label, <1,1,1>, 1.0 ]);
+    } else {
+        // Flat box tile: empty cell, or a piece without a sculpt map yet. The
+        // sprite goes on the top face only (blank the rest), rotated for facing.
+        float texRot = (float)cOrient(cell) * PI * 0.25 * TEX_ROT_SIGN;
+        llSetLinkPrimitiveParamsFast(LINK_THIS, [
+            PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0.0,1.0,0.0>, 0.0,
+                <0.0,0.0,0.0>, <1.0,1.0,0.0>, <0.0,0.0,0.0>,
+            PRIM_SIZE, TILE_SIZE,
+            PRIM_POS_LOCAL, <lp.x, lp.y, CELL_ZOFF>,
+            PRIM_ROT_LOCAL, ZERO_ROTATION,
+            PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
+            PRIM_TEXTURE, TOP_FACE,  llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
+            PRIM_COLOR, ALL_SIDES, col, a,
+            PRIM_GLOW,  ALL_SIDES, glow,
+            PRIM_TEXT,  label, <1,1,1>, 1.0 ]);
+    }
 }
 
 setHighlight(integer on) {
