@@ -158,6 +158,10 @@ integer canFire(integer t) { return (t == T_LASER || t == T_STUNNER); }
 integer isFeature(integer t) { return (t == T_HOLE || t == T_HYPERHOLE); }
 
 updateVisuals(integer cell) {
+    // Only render once we're a placed, linked board cell. On a standalone prim
+    // (e.g. the unlinked lc_cell template) PRIM_POS_LOCAL is the *region*
+    // position, so setting it here would fling the prim underground.
+    if (gMyX < 0) return;
     gCurrentCell = cell;
     integer t = cType(cell);
     integer owner = cOwner(cell);
@@ -250,7 +254,9 @@ showActionDialog() {
 default {
     state_entry() {
         parsePosition();
-        updateVisuals(0);   // render the blank empty cell
+        if (gMyX >= 0) updateVisuals(0);   // render the blank empty cell
+        else llSetText("laser-chess cell\nlink into the board, then Reset Scripts",
+                       <1,1,0>, 1.0);       // unlinked template: leave it where it is
     }
 
     touch_start(integer n) {
