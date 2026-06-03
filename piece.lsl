@@ -221,8 +221,11 @@ updateVisuals(integer cell) {
     if (sc != "") {
         // 3D sculptie piece: morph the prim and rotate it to face its orientation.
         vector sz = llList2Vector(SCULPT_SIZE, t);
-        rotation rot = llAxisAngle2Rot(<0.0,0.0,1.0>,
-            (float)cOrient(cell) * PI * 0.25 * SCULPT_ROT_SIGN);
+        float facing = (float)cOrient(cell) * PI * 0.25;
+        // Bomb: spikes sit on the orthogonal faces (+ config). In the diagonal
+        // config (bombDiag==1) turn it an extra 45° so they point at the X.
+        if (t == T_BOMB && cBombDiag(cell)) facing += PI * 0.25;
+        rotation rot = llAxisAngle2Rot(<0.0,0.0,1.0>, facing * SCULPT_ROT_SIGN);
         if (llList2Integer(SCULPT_FLIP, t))            // upside-down map: flip upright first
             rot = llAxisAngle2Rot(<1.0,0.0,0.0>, PI) * rot;
         // Stand the token's base on the top of the tile: prim centre = tile top

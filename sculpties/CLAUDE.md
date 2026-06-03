@@ -20,10 +20,10 @@ fallback for any type whose `SCULPT` entry is `""`.
 |---|------|----------|-----------|--------------|-------|
 | 1 | King | `king_sculptmap` | Cylinder | no | tall; `SCULPT_SIZE` Z already raised |
 | 2 | Laser | `laser_sculptmap` | Cylinder | **yes** | barrel points at the facing dir |
-| 3 | Stunner | `stunner_sculptmap` | Cylinder | **yes** | front nub + rear shield ridge |
-| 4 | One-Way Mirror | `oneway_sculptmap` | Cylinder | **yes** | thin panel; the map is thin in Y on purpose — keep `SCULPT_SIZE` X≈Y so it stays thin |
-| 5 | Triangular Mirror | `trimir_sculptmap` | Cylinder | **yes** | flat face forward, vertex at back |
-| 6 | Bomb | `bomb_sculptmap` | Cylinder | no | round + fuse; orient only matters for the orthogonal/diagonal bombDiag art, which the shape doesn't show |
+| 3 | Stunner | `stunner_sculptmap` | Cylinder | **yes** | octagon; 8 faces = `g-v-s-v-s-v-s-v` from the front (gun, then alternating vulnerable/shield). Front face = gun = the firing direction; keep `SCULPT_SIZE` X≈Y so the octagon isn't squashed |
+| 4 | One-Way Mirror | `oneway_sculptmap` | Cylinder | **yes** | arrow; it points the **pass-through** direction. Keep `SCULPT_SIZE` X≈Y so the arrow stays proportioned (a flatter Z reads as a marker) |
+| 5 | Triangular Mirror | `trimir_sculptmap` | Cylinder | **yes** | right triangle, reflective face = hypotenuse (front), right-angle vertex at back; keep `SCULPT_SIZE` X≈Y |
+| 6 | Bomb | `bomb_sculptmap` | Cylinder | **yes (config)** | 4 blast spikes point at the orthogonal faces (explosion sides, default `bombDiag=0`). When `bombDiag=1`, rotate the prim an extra **45°** so the spikes point at the diagonals. Keep `SCULPT_SIZE` X≈Y |
 | 7 | **Hypergon** | `hypergon_sculptmap` | **Sphere** | no | the ONLY Sphere-stitched piece — see required change below |
 | 8 | Beam Splitter | `splitter_sculptmap` | Cylinder | **yes** | diamond; splitting edge faces forward |
 | 9 | Partially-Mirrored Octagon | `poct_sculptmap` | Cylinder | **yes** | thicker shield on the 3 rear faces |
@@ -69,7 +69,10 @@ Hole/Hyper Hole (11/12) have no sculptie — leave their `SCULPT` entries `""`.
    (i.e. `orient * 45°`), consistent with the existing `TEX_ROT_SIGN` logic. Test
    one directional piece (e.g. Laser): if it points the wrong way, flip
    `SCULPT_ROT_SIGN`; if a specific map is upside-down, set its `SCULPT_FLIP`
-   entry to 1. Non-directional pieces (King, Bomb, Hypergon, Full Oct) don't care.
+   entry to 1. Truly non-directional pieces (King, Hypergon, Full Oct) don't
+   care. **Bomb** is a special case: it has no per-facing art, but add an extra
+   **45°** to its Z rotation when `bombDiag == 1` so its blast spikes point at
+   the diagonals.
 
 4. **Sizing.** The maps encode positions in the `[-1,1]` box, so `SCULPT_SIZE`
    is just the prim's bounding box; axes the model doesn't fill stay
