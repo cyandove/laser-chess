@@ -19,7 +19,8 @@ integer BOARD_H = 11;
 
 // Physical layout (used to auto-arrange cell prims by name on start).
 float CELL_SIZE = 1.0;   // metres per cell — match your build
-float CELL_ZOFF = 0.05;  // cell lift above the root face (local Z)
+float CELL_ZOFF = 0.20;  // cell lift above the root (local Z) — keep > root half-height
+                         // so the board sits above the controller prim (must match piece.lsl)
 
 // ---- Piece types ----
 integer T_EMPTY     = 0;
