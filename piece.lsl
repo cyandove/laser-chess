@@ -78,7 +78,7 @@ list TEX = [
 // from sculpties/README.md, then paste the map UUIDs here and re-drop this script.
 list SCULPT = [
     "",  //  0 empty
-    "",  //  1 King       (king_sculptmap, Cylinder)  <- paste UUID
+    "310259e5-e6f2-ccab-a55c-c7c7f03e25c5", //  1 King   (king_sculptmap, Cylinder)
     "",  //  2 Laser
     "",  //  3 Stunner
     "",  //  4 One-Way
@@ -87,7 +87,7 @@ list SCULPT = [
     "",  //  7 Hypergon
     "",  //  8 Splitter
     "",  //  9 Part. Oct
-    "",  // 10 Full Oct   (foct_sculptmap, Cylinder)  <- paste UUID
+    "0b2e2e7a-943c-fa25-2afb-c8073e7e4b17", // 10 Full Oct (foct_sculptmap, Cylinder)
     "",  // 11 Hole
     ""   // 12 Hyper Hole
 ];
