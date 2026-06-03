@@ -115,11 +115,12 @@ vector  TILE_SIZE       = <1.0, 1.0, 0.05>;  // the flat cell tile (empty / text
 float   CELL_ZOFF       = 0.20;     // local Z of the cell tiles above the root (match game_controller)
 float   SCULPT_BASE_Z   = 0.0;      // extra lift of tokens above the tile top (fine-tune)
 
-// Per-type 180-degree upright flip (1 = that sculpt map is upside down). The
-// King's map needs it; the others don't (yet).
+// Per-type 180-degree upright flip (1 = that sculpt map is itself upside down).
+// None needed with a correctly-oriented root; set an entry to 1 if a map renders
+// inverted.
 list SCULPT_FLIP = [
-    0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-//  0  1  2  3  4  5  6  7  8  9 10 11 12   (1 = King)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+//  0  1  2  3  4  5  6  7  8  9 10 11 12
 ];
 
 // ---- decode ----
@@ -209,15 +210,13 @@ updateVisuals(integer cell) {
             (float)cOrient(cell) * PI * 0.25 * SCULPT_ROT_SIGN);
         if (llList2Integer(SCULPT_FLIP, t))            // upside-down map: flip upright first
             rot = llAxisAngle2Rot(<1.0,0.0,0.0>, PI) * rot;
-        // Stand the token's base on the top of the tile. This board's root has
-        // its local Z pointing DOWN, so a bigger Z is lower — we subtract half
-        // the token height to lift it onto the tile. If a token floats/sinks,
-        // nudge SCULPT_BASE_Z (more negative = higher here).
+        // Stand the token's base on the top of the tile: prim centre = tile top
+        // + half the token height. Nudge SCULPT_BASE_Z if a token floats/sinks.
         float tileTopZ = CELL_ZOFF + TILE_SIZE.z * 0.5;
         llSetLinkPrimitiveParamsFast(LINK_THIS, [
             PRIM_TYPE, PRIM_TYPE_SCULPT, sc, SCULPT_STITCH,
             PRIM_SIZE, sz,
-            PRIM_POS_LOCAL, <lp.x, lp.y, tileTopZ + SCULPT_BASE_Z - sz.z * 0.5>,
+            PRIM_POS_LOCAL, <lp.x, lp.y, tileTopZ + SCULPT_BASE_Z + sz.z * 0.5>,
             PRIM_ROT_LOCAL, rot,
             PRIM_COLOR, ALL_SIDES, col, a,
             PRIM_GLOW,  ALL_SIDES, glow,
