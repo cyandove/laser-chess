@@ -105,7 +105,7 @@ stay flat tiles. So you can add 3D pieces one type at a time and mix them with t
 The script tints sculpties red/green by owner and **rotates the prim** to show facing.
 Tuning knobs in `piece.lsl`:
 - `SCULPT_SIZE` — per-type prim size `<x,y,z>` (the maps fill `[-1,1]`; make tokens taller in Z).
-- `SCULPT_STITCH` — stitching type (Cylinder for the current maps; see `sculpties/README.md`).
+- `SCULPT_STITCH` — per-type stitching list (Cylinder for most; Sphere for the Hypergon gem; see `sculpties/README.md`).
 - `SCULPT_ROT_SIGN` — flip if a piece faces the wrong way.
 - `SCULPT_BASE_Z` / `CELL_ZOFF` / `TILE_SIZE` — how tokens sit on the board vs. the flat tiles.
 

@@ -78,16 +78,16 @@ list TEX = [
 // from sculpties/README.md, then paste the map UUIDs here and re-drop this script.
 list SCULPT = [
     "",  //  0 empty
-    "310259e5-e6f2-ccab-a55c-c7c7f03e25c5", //  1 King   (king_sculptmap, Cylinder)
-    "",  //  2 Laser
-    "",  //  3 Stunner
-    "",  //  4 One-Way
-    "",  //  5 Triangular
-    "",  //  6 Bomb
-    "",  //  7 Hypergon
-    "",  //  8 Splitter
-    "",  //  9 Part. Oct
-    "0b2e2e7a-943c-fa25-2afb-c8073e7e4b17", // 10 Full Oct (foct_sculptmap, Cylinder)
+    "310259e5-e6f2-ccab-a55c-c7c7f03e25c5", //  1 King
+    "bdd73307-42f2-f659-7b13-5cbc450e9dab", //  2 Laser
+    "76d8e2fa-a0f3-74b1-06c2-77f225382c4a", //  3 Stunner
+    "884f55aa-7242-01e7-3253-e0c36bed22aa", //  4 One-Way
+    "179db31f-d23f-e03f-4a9e-d93ab3a947f1", //  5 Triangular
+    "983ed87f-c6d0-3f2e-3225-acf5c57556fb", //  6 Bomb
+    "1781631d-8a8c-2d34-5f4a-c90d52ea2ba9", //  7 Hypergon
+    "4ca24f9f-0d2a-eaa2-322a-708c60f069df", //  8 Splitter
+    "7e95cafd-b0e4-9e0c-c273-c3e9d45873f9", //  9 Part. Oct
+    "0b2e2e7a-943c-fa25-2afb-c8073e7e4b17", // 10 Full Oct
     "",  // 11 Hole
     ""   // 12 Hyper Hole
 ];
@@ -109,7 +109,22 @@ list SCULPT_SIZE = [
     <0.80,0.80,0.40>   // 12 Hyper Hole
 ];
 
-integer SCULPT_STITCH  = PRIM_SCULPT_TYPE_CYLINDER; // both maps; add a per-type list if needed
+// Per-type sculpt stitching. Most maps are Cylinder; the Hypergon gem is Sphere.
+list SCULPT_STITCH = [
+    PRIM_SCULPT_TYPE_CYLINDER,  //  0 (unused)
+    PRIM_SCULPT_TYPE_CYLINDER,  //  1 King
+    PRIM_SCULPT_TYPE_CYLINDER,  //  2 Laser
+    PRIM_SCULPT_TYPE_CYLINDER,  //  3 Stunner
+    PRIM_SCULPT_TYPE_CYLINDER,  //  4 One-Way
+    PRIM_SCULPT_TYPE_CYLINDER,  //  5 Triangular
+    PRIM_SCULPT_TYPE_CYLINDER,  //  6 Bomb
+    PRIM_SCULPT_TYPE_SPHERE,    //  7 Hypergon
+    PRIM_SCULPT_TYPE_CYLINDER,  //  8 Splitter
+    PRIM_SCULPT_TYPE_CYLINDER,  //  9 Part. Oct
+    PRIM_SCULPT_TYPE_CYLINDER,  // 10 Full Oct
+    PRIM_SCULPT_TYPE_CYLINDER,  // 11 Hole
+    PRIM_SCULPT_TYPE_CYLINDER   // 12 Hyper Hole
+];
 float   SCULPT_ROT_SIGN = -1.0;     // facing-rotation direction (flip if pieces face wrong way)
 vector  TILE_SIZE       = <1.0, 1.0, 0.05>;  // the flat cell tile (empty / textured pieces)
 float   CELL_ZOFF       = 0.20;     // local Z of the cell tiles above the root (match game_controller)
@@ -214,7 +229,7 @@ updateVisuals(integer cell) {
         // + half the token height. Nudge SCULPT_BASE_Z if a token floats/sinks.
         float tileTopZ = CELL_ZOFF + TILE_SIZE.z * 0.5;
         llSetLinkPrimitiveParamsFast(LINK_THIS, [
-            PRIM_TYPE, PRIM_TYPE_SCULPT, sc, SCULPT_STITCH,
+            PRIM_TYPE, PRIM_TYPE_SCULPT, sc, llList2Integer(SCULPT_STITCH, t),
             PRIM_SIZE, sz,
             PRIM_POS_LOCAL, <lp.x, lp.y, tileTopZ + SCULPT_BASE_Z + sz.z * 0.5>,
             PRIM_ROT_LOCAL, rot,
