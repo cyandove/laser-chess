@@ -209,12 +209,14 @@ updateVisuals(integer cell) {
             (float)cOrient(cell) * PI * 0.25 * SCULPT_ROT_SIGN);
         if (llList2Integer(SCULPT_FLIP, t))            // upside-down map: flip upright first
             rot = llAxisAngle2Rot(<1.0,0.0,0.0>, PI) * rot;
-        // Stand the token's base on the top of the tile.
+        // Stand the token's base on the top of the tile. (The maps sit a full
+        // height below the prim centre, so lift by 1.5*size.z; nudge with
+        // SCULPT_BASE_Z if a token still floats or sinks.)
         float tileTopZ = CELL_ZOFF + TILE_SIZE.z * 0.5;
         llSetLinkPrimitiveParamsFast(LINK_THIS, [
             PRIM_TYPE, PRIM_TYPE_SCULPT, sc, SCULPT_STITCH,
             PRIM_SIZE, sz,
-            PRIM_POS_LOCAL, <lp.x, lp.y, tileTopZ + SCULPT_BASE_Z + sz.z * 0.5>,
+            PRIM_POS_LOCAL, <lp.x, lp.y, tileTopZ + SCULPT_BASE_Z + sz.z * 1.5>,
             PRIM_ROT_LOCAL, rot,
             PRIM_COLOR, ALL_SIDES, col, a,
             PRIM_GLOW,  ALL_SIDES, glow,
