@@ -1,6 +1,7 @@
 // ============================================================
 // Advanced Laser Chess — Cell Prim On-Rez Self-Placer
-// Drop this into the "lc_cell" template prim alongside piece.lsl.
+// Drop this into the "lc_cell" template prim (the cell needs no other script —
+// rendering is done from the root by board_renderer.lsl).
 //
 // builder_rezzer.lsl rezzes every cell AT the rezzer (because llRezObject
 // can't reach the far side of the board). On rez this script:

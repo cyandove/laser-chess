@@ -126,5 +126,5 @@ with a directional mirror/shield/arrow.
    Stunner) in v1, or a phased build (mirrors + laser + king first, then the rest)?
 
 Once you've marked this up, I'll rewrite `game_controller.lsl` (8-direction
-rotation, 3 actions, capture, new beam interactions), update `piece.lsl`, and
+rotation, 3 actions, capture, new beam interactions), update the renderer, and
 rewrite `INSTRUCTIONS.md` to match.

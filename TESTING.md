@@ -12,7 +12,7 @@ effects, per-turn caps) are **not** active yet — see "Not yet implemented" bel
 | Script | Goes in | Role |
 |--------|---------|------|
 | `game_controller.lsl` | board **root** prim | all game logic |
-| `piece.lsl` | every **cell** prim (×165) | rendering, touch, dialog |
+| `board_renderer.lsl` | board **root** prim | rendering, touch, dialog — drives all 165 cells (cells hold no script) |
 | `laser_fx.lsl` | one extra child prim (optional) | beam ribbon FX |
 | `ai_controller.lsl` | — | **do NOT use yet** (still the old ruleset; rewritten in Phase 4) |
 | `builder_rezzer.lsl`, `builder_cell_onrez.lsl` | build helpers | rez + self-position the 165 cells |
@@ -30,7 +30,7 @@ The board is **15 × 11 = 165 cells**. Easiest path uses the rezzer.
 
 ### 1a. Make the cell template
 1. Rez a flat box, size **1.0 × 1.0 × 0.05 m**. Name it exactly **`lc_cell`**.
-2. Drop **`piece.lsl`** and **`builder_cell_onrez.lsl`** into its Contents.
+2. Drop **`builder_cell_onrez.lsl`** into its Contents (the cell needs no other script).
 3. Take it into your inventory (so it becomes an inventory object).
 
 ### 1b. Make the rezzer
@@ -163,13 +163,13 @@ These arrive in **Phase 3**:
   region, so `llSetRegionPos` refused to move them. Move the rezzer further from the
   region edge (the board needs ~15 m east and ~11 m south of the corner) and re-rez.
 - **Cells in the wrong physical spots (names are right, positions scrambled)**: just
-  **Reset Scripts** — `game_controller`'s `layoutCells` re-arranges every cell by its name.
+  **Reset Scripts** — `board_renderer.lsl` positions every cell by its name as it renders.
   No rebuild needed. (If a cell is genuinely *named* wrong, re-rez it; don't run
   `builder_layout` on a rezzer-built board.)
-- **Pieces blank**: a cell prim isn't named `cell_X_Y`, or `piece.lsl` didn't re-read its
-  name — Reset Scripts in Selection.
-- **Nothing happens on touch**: make sure `game_controller.lsl` is in the **root** and
-  every cell has `piece.lsl`.
+- **Pieces blank**: a cell prim isn't named `cell_X_Y` (so the renderer's link map missed
+  it) — fix the name and Reset Scripts so it rebuilds the map.
+- **Nothing happens on touch**: make sure `game_controller.lsl` **and** `board_renderer.lsl`
+  are both in the **root** prim.
 - **Board never paints**: the controller waits 1s on start then broadcasts; if you reset
   scripts, touch the root or send the `RESET` config message
   (`llMessageLinked(LINK_SET, 100, "RESET", NULL_KEY)`).
