@@ -8,16 +8,16 @@ laser_sculptmap
 bdd73307-42f2-f659-7b13-5cbc450e9dab
 
 stunner_sculptmap
-76d8e2fa-a0f3-74b1-06c2-77f225382c4a
+012f2161-df39-b9ce-ca54-7ffa54d9528d
 
 oneway_sculptmap
-884f55aa-7242-01e7-3253-e0c36bed22aa
+424b4fd1-cb28-3b2e-616c-77be64f0c8c0
 
 trimir_sculptmap
-179db31f-d23f-e03f-4a9e-d93ab3a947f1
+4ce24d3a-acb8-c5f7-5f25-fc7a21ae7905
 
 bomb_sculptmap
-983ed87f-c6d0-3f2e-3225-acf5c57556fb
+5211a05d-3554-5dc9-d06c-ca4a4836fa74
 
 hypergon_sculptmap
 1781631d-8a8c-2d34-5f4a-c90d52ea2ba9

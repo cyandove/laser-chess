@@ -80,10 +80,10 @@ list SCULPT = [
     "",  //  0 empty
     "310259e5-e6f2-ccab-a55c-c7c7f03e25c5", //  1 King
     "bdd73307-42f2-f659-7b13-5cbc450e9dab", //  2 Laser
-    "76d8e2fa-a0f3-74b1-06c2-77f225382c4a", //  3 Stunner
-    "884f55aa-7242-01e7-3253-e0c36bed22aa", //  4 One-Way
-    "179db31f-d23f-e03f-4a9e-d93ab3a947f1", //  5 Triangular
-    "983ed87f-c6d0-3f2e-3225-acf5c57556fb", //  6 Bomb
+    "012f2161-df39-b9ce-ca54-7ffa54d9528d", //  3 Stunner
+    "424b4fd1-cb28-3b2e-616c-77be64f0c8c0", //  4 One-Way
+    "4ce24d3a-acb8-c5f7-5f25-fc7a21ae7905", //  5 Triangular
+    "5211a05d-3554-5dc9-d06c-ca4a4836fa74", //  6 Bomb
     "1781631d-8a8c-2d34-5f4a-c90d52ea2ba9", //  7 Hypergon
     "4ca24f9f-0d2a-eaa2-322a-708c60f069df", //  8 Splitter
     "7e95cafd-b0e4-9e0c-c273-c3e9d45873f9", //  9 Part. Oct
