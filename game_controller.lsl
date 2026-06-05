@@ -730,7 +730,9 @@ handleTouch(integer x, integer y) {
 }
 
 handleAction(string action) {
-    if (gSelX < 0 || gState == GS_GAMEOVER) return;
+    // Need a selected piece; ignore while a beam plays or the game is over
+    // (control buttons are always live, unlike the old per-piece menu).
+    if (gSelX < 0 || gState == GS_GAMEOVER || gState == GS_FIRING) return;
 
     if (action == "MOVE") {
         gState = GS_AWAIT_DST;

@@ -146,6 +146,12 @@ list    gHL;            // highlight flag (0/1) for each square
 key     gLastToucher = NULL_KEY;
 integer gListen = 0;
 
+// Side control buttons (named ctl_*_ccw / _cw / _fire). Parallel lists:
+// gCtlLink[i] is a child link, gCtlAction[i] the action it fires on the
+// currently-selected piece.
+list    gCtlLink;
+list    gCtlAction;
+
 // ---- decode ----
 integer cType(integer c)   { return c % 100; }
 integer cOwner(integer c)  { return (c / 100) % 10; }
@@ -189,9 +195,20 @@ initCaches() {
 }
 
 // (Re)build the (x,y) -> link map by scanning every cell_X_Y child name.
+// Map a control prim's name suffix to the action it fires ("" = not a control).
+string ctlAction(string nm) {
+    list p = llParseString2List(nm, ["_"], []);
+    string suf = llList2String(p, llGetListLength(p) - 1);
+    if (suf == "ccw")  return "ROTATE_CCW";
+    if (suf == "cw")   return "ROTATE_CW";
+    if (suf == "fire") return "FIRE";
+    return "";
+}
+
 scanLinks() {
     integer total = BOARD_W * BOARD_H;
     gLink = [];
+    gCtlLink = []; gCtlAction = [];
     integer i;
     for (i = 0; i < total; ++i) gLink += [-1];
     integer n = llGetNumberOfPrims();
@@ -207,6 +224,9 @@ scanLinks() {
                     gLink = llListReplaceList(gLink, [i], idx, idx);
                 }
             }
+        } else if (llGetSubString(nm, 0, 3) == "ctl_") {
+            string act = ctlAction(nm);
+            if (act != "") { gCtlLink += [i]; gCtlAction += [act]; }
         }
     }
 }
@@ -335,8 +355,15 @@ default {
     }
 
     touch_start(integer n) {
-        integer idx = llListFindList(gLink, [llDetectedLinkNumber(0)]);
-        if (idx < 0) return;              // not one of the board cells
+        integer link = llDetectedLinkNumber(0);
+        // Side control button: fire its action at the current selection.
+        integer ci = llListFindList(gCtlLink, [link]);
+        if (ci >= 0) {
+            llMessageLinked(LINK_ROOT, LM_ACTION, llList2String(gCtlAction, ci), NULL_KEY);
+            return;
+        }
+        integer idx = llListFindList(gLink, [link]);
+        if (idx < 0) return;              // not a board cell or a control
         gLastToucher = llDetectedKey(0);
         llMessageLinked(LINK_ROOT, LM_PIECE_TOUCH,
             (string)(idx % BOARD_W) + "," + (string)(idx / BOARD_W), NULL_KEY);
