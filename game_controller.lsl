@@ -61,6 +61,8 @@ integer LM_SELECT      = 12;  // -> board_renderer.lsl: which cell is selected (
 integer LM_RENDER_MODE = 13;  // -> renderer: "3D" / "FLAT"
 integer LM_SETUP       = 14;  // -> renderer: show setup screen "flat,ai,side"
 integer LM_CONFIRM     = 15;  // -> renderer: show reset-confirm prompt
+integer LM_BUILD_BOARD = 16;  // -> board_init.lsl: build the starting board
+integer LM_BOARD_DATA  = 17;  // board_init.lsl -> us: the starting board CSV
 integer LM_AI_REQUEST  = 20;
 integer LM_AI_RESPONSE = 21;
 integer LM_CONFIG      = 100;
@@ -166,62 +168,8 @@ broadcastBoard() {
 // ============================================================
 // SETUP — place a Red piece and its 180-degree Green counterpart.
 // ============================================================
-placePair(integer x, integer y, integer t, integer o, integer bombDiag) {
-    bSet(x, y, mkCell(t, P_RED, o, 0, bombDiag));
-    integer gx = (BOARD_W-1) - x;
-    integer gy = (BOARD_H-1) - y;
-    integer go = (o + 4) % 8;
-    bSet(gx, gy, mkCell(t, P_GREEN, go, 0, bombDiag));
-}
-neutral(integer x, integer y, integer t) {
-    bSet(x, y, mkCell(t, O_NONE, 0, 0, 0));
-}
-
-initBoard() {
-    gBoard = [];
-    integer i;
-    for (i=0; i<BOARD_W*BOARD_H; ++i) gBoard += [0];
-
-    // --- Red back column (x=0) ---
-    placePair(0, 0,  T_ONEWAY,   2, 0);   // Oe
-    placePair(0, 1,  T_TRIMIR,   2, 0);   // Te  (cardinal -> flat mirror)
-    placePair(0, 2,  T_BOMB,     0, 0);   // Bo  (orthogonal)
-    placePair(0, 3,  T_STUNNER,  6, 0);   // Sw
-    placePair(0, 4,  T_LASER,    2, 0);   // Le
-    placePair(0, 5,  T_KING,     0, 0);   // K
-    placePair(0, 6,  T_LASER,    2, 0);   // Le
-    placePair(0, 7,  T_STUNNER,  6, 0);   // Sw
-    placePair(0, 8,  T_BOMB,     0, 0);   // Bo
-    placePair(0, 9,  T_TRIMIR,   2, 0);   // Te
-    placePair(0, 10, T_ONEWAY,   2, 0);   // Oe
-
-    // --- Red middle column (x=1) ---
-    placePair(1, 0,  T_TRIMIR,   3, 0);   // Tse (diagonal -> deflector)
-    placePair(1, 1,  T_TRIMIR,   0, 0);   // Tn
-    placePair(1, 2,  T_ONEWAY,   2, 0);   // Oe
-    placePair(1, 3,  T_HYPERGON, 0, 0);   // H
-    placePair(1, 4,  T_SPLITTER, 6, 0);   // Pw
-    placePair(1, 5,  T_STUNNER,  6, 0);   // Sw
-    placePair(1, 6,  T_SPLITTER, 6, 0);   // Pw
-    placePair(1, 7,  T_HYPERGON, 0, 0);   // H
-    placePair(1, 8,  T_ONEWAY,   2, 0);   // Oe
-    placePair(1, 9,  T_TRIMIR,   4, 0);   // Ts
-    placePair(1, 10, T_TRIMIR,   1, 0);   // Tne
-
-    // --- Red front column (x=2): 4 partial octagons + 1 full (centre) ---
-    placePair(2, 3,  T_POCT,     2, 0);   // me (shield ne/e/se)
-    placePair(2, 4,  T_POCT,     2, 0);
-    placePair(2, 5,  T_FOCT,     0, 0);   // M  (fully mirrored)
-    placePair(2, 6,  T_POCT,     2, 0);
-    placePair(2, 7,  T_POCT,     2, 0);
-
-    // --- Neutral centre features (column x=7) ---
-    neutral(7, 1, T_HOLE);
-    neutral(7, 3, T_HOLE);
-    neutral(7, 5, T_HYPERHOLE);
-    neutral(7, 7, T_HOLE);
-    neutral(7, 9, T_HOLE);
-}
+// The starting position is built by board_init.lsl (a separate root script) and
+// streamed back as a CSV — see startGame() / the LM_BOARD_DATA handler.
 
 // ============================================================
 // CAPTURE / MOVEMENT RULES
@@ -705,11 +653,18 @@ showSetup() {
     llMessageLinked(LINK_THIS, LM_SETUP,
         (string)gFlatMode + "," + (string)gAIEnabled + "," + (string)gAIPlayer, NULL_KEY);
 }
+// Ask board_init.lsl for a fresh starting board; play begins on LM_BOARD_DATA.
 startGame() {
-    initBoard();
+    llSetTimerEvent(0.0);   // cancel any beam in flight
+    llMessageLinked(LINK_THIS, LM_BUILD_BOARD, "", NULL_KEY);
+}
+// Load the streamed board (CSV; elements stay strings — bGet casts) and start.
+beginGame(string boardCSV) {
+    gBoard = llParseString2List(boardCSV, [","], []);
     gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
     gState = GS_IDLE; gSelX = -1; gSelY = -1;
     resetTurnState();
+    llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);
     broadcastBoard();
     announceTurn();        // kicks the AI if it happens to play Red
 }
@@ -788,14 +743,7 @@ handleTouch(integer x, integer y) {
     }
     if (gState == GS_FIRING) return;            // ignore touches while a beam plays
     if (gState == GS_GAMEOVER) {
-        llSetTimerEvent(0.0);
-        initBoard();
-        gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
-        gState = GS_IDLE; gSelX = -1; gSelY = -1;
-        llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);
-        resetTurnState();
-        clearHL(); broadcastBoard();
-        announceTurn();
+        startGame();   // touch to restart -> fresh board, begins on LM_BOARD_DATA
         return;
     }
     if (gAIEnabled && gCurPlayer == gAIPlayer) return;
@@ -888,6 +836,10 @@ default {
         if (num == LM_RENDER_READY) {
             sendRenderMode();   // renderer just (re)started — resync mode + screen
             repaint();
+            return;
+        }
+        if (num == LM_BOARD_DATA) {   // board_init streamed a fresh starting board
+            beginGame(str);
             return;
         }
         if (num == LM_PIECE_TOUCH) {

@@ -5,11 +5,15 @@
 One linked object, root prim = game board face:
 
 ```
-Root prim          ← game_controller.lsl + board_renderer.lsl
+Root prim          ← game_controller.lsl + board_renderer.lsl + board_init.lsl
 Child prims ×165   ← (no script — just named cell_X_Y; the renderer drives them)
 Any child prim     ← ai_controller.lsl  (one copy anywhere in linkset)
 1 child prim        ← laser_fx.lsl  (optional, named "fxbeam" — beam ribbon FX)
 ```
+
+`board_init.lsl` is a small helper that builds the starting position and streams
+it to the controller (the controller was near the 64 KB script limit, so the
+setup data/churn lives here). It must be in the **root** with the other two.
 
 `board_renderer.lsl` replaces the old per-cell `piece.lsl`: one script in the root
 maps every `cell_X_Y` child to a link number and morphs it between a flat tile and a
@@ -44,14 +48,14 @@ step-by-step usage; in short:
 3. Touch the rezzer → it rezzes 165 cells, and each cell **self-positions and self-names**
    `cell_X_Y` via `llSetRegionPos` (needed because `llRezObject` can't reach the far side).
 4. Select all 165 + the board root (root last) and **link** — the cells are already named
-   and placed, so **do not run `builder_layout`**. Then drop `game_controller.lsl` and
-   `board_renderer.lsl` into the root and Reset Scripts.
+   and placed, so **do not run `builder_layout`**. Then drop `game_controller.lsl`,
+   `board_renderer.lsl`, and `board_init.lsl` into the root and Reset Scripts.
 
 **Workflow B — manual layout (no rezzer)**
 1. Duplicate one flat prim to 165, link them all under the board root.
 2. Drop `builder_layout.lsl` into the root prim.
 3. Touch the root → it names every child cell **by link order**.
-4. Remove `builder_layout.lsl`; drop in `game_controller.lsl` + `board_renderer.lsl`.
+4. Remove `builder_layout.lsl`; drop in `game_controller.lsl` + `board_renderer.lsl` + `board_init.lsl`.
 
 (The cell *positions* are set by `board_renderer.lsl` as it renders, so the builders only
 need to name the cells; exact placement is handled in-script.)
