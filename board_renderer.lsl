@@ -20,6 +20,10 @@ integer BOARD_H = 11;
 // gUnit = root width / BOARD_W (see measureUnit). All other lengths (TILE_SIZE,
 // CELL_ZOFF, SCULPT_SIZE, SCULPT_BASE_Z) are per-unit and scaled by gUnit.
 float   gUnit = 1.0;
+// Tile Z is derived from the ROOT's measured thickness so the tiles sit just
+// above the root's top face (otherwise the root catches clicks meant for cells).
+float   gTileZ    = 0.10;   // tile centre, local Z
+float   gTileTopZ = 0.13;   // tile top = where sculpt tokens stand
 
 integer T_EMPTY     = 0;
 integer T_KING      = 1;
@@ -136,7 +140,8 @@ list SCULPT_STITCH = [
 ];
 float   SCULPT_ROT_SIGN = -1.0;     // facing-rotation direction (flip if pieces face wrong way)
 vector  TILE_SIZE       = <1.0, 1.0, 0.05>;  // the flat cell tile (empty / textured pieces)
-float   CELL_ZOFF       = 0.20;     // local Z of the cell tiles above the root
+float   CELL_ZOFF       = 0.05;     // gap between the root's top face and the tiles
+                                   // (keeps the root prim from catching clicks)
 float   SCULPT_BASE_Z   = 0.0;      // extra lift of tokens above the tile top (fine-tune)
 
 // Per-type 180-degree upright flip (1 = that sculpt map is itself upside down).
@@ -251,6 +256,11 @@ measureUnit() {
     vector s = llGetScale();   // LSL can't do llGetScale().x directly
     gUnit = s.x / (float)BOARD_W;
     if (gUnit <= 0.0) gUnit = 1.0;
+    // Sit the tiles a small gap above the root's TOP face (s.z*0.5), so the root
+    // never sits at/above the cells and steal their clicks — for any thickness.
+    float rootTop = s.z * 0.5;
+    gTileZ    = rootTop + (CELL_ZOFF + TILE_SIZE.z * 0.5) * gUnit;  // tile centre
+    gTileTopZ = rootTop + (CELL_ZOFF + TILE_SIZE.z) * gUnit;        // tile top
 }
 
 // Local XY of a cell relative to the root (centered grid). Z is left to the caller.
@@ -310,7 +320,7 @@ renderIdx(integer idx) {
             rot = llAxisAngle2Rot(<1.0,0.0,0.0>, PI) * rot;
         // Stand the token's base on the top of the tile: prim centre = tile top
         // + half the token height. Everything scales with the measured tile (gUnit).
-        float centreZ = (CELL_ZOFF + TILE_SIZE.z * 0.5 + SCULPT_BASE_Z + sz.z * 0.5) * gUnit;
+        float centreZ = gTileTopZ + (SCULPT_BASE_Z + sz.z * 0.5) * gUnit;
         llSetLinkPrimitiveParamsFast(link, [
             PRIM_TYPE, PRIM_TYPE_SCULPT, sc, llList2Integer(SCULPT_STITCH, t),
             PRIM_SIZE, sz * gUnit,
@@ -327,7 +337,7 @@ renderIdx(integer idx) {
             PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0.0,1.0,0.0>, 0.0,
                 <0.0,0.0,0.0>, <1.0,1.0,0.0>, <0.0,0.0,0.0>,
             PRIM_SIZE, TILE_SIZE * gUnit,
-            PRIM_POS_LOCAL, <lx, ly, CELL_ZOFF * gUnit>,
+            PRIM_POS_LOCAL, <lx, ly, gTileZ>,
             PRIM_ROT_LOCAL, ZERO_ROTATION,
             PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
             PRIM_TEXTURE, TOP_FACE,  llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
@@ -353,7 +363,7 @@ paintTile(integer idx, vector col, string label) {
         PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0.0,1.0,0.0>, 0.0,
             <0.0,0.0,0.0>, <1.0,1.0,0.0>, <0.0,0.0,0.0>,
         PRIM_SIZE, TILE_SIZE * gUnit,
-        PRIM_POS_LOCAL, <lp.x, lp.y, CELL_ZOFF * gUnit>,
+        PRIM_POS_LOCAL, <lp.x, lp.y, gTileZ>,
         PRIM_ROT_LOCAL, ZERO_ROTATION,
         PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
         PRIM_COLOR, ALL_SIDES, col, 1.0,
