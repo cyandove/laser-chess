@@ -1,10 +1,21 @@
 // ============================================================
-// Advanced Laser Chess — Piece / Board-Square Script  (ALC, Phase 1)
-// Goes in every child cell prim, named "cell_X_Y".
-// Renders the cell, forwards touches, shows the action dialog.
+// Advanced Laser Chess — Board Renderer  (root prim, drives all cells)
+// Lives in the ROOT prim alongside game_controller.lsl. Replaces the old
+// per-cell piece.lsl: one script renders all 165 `cell_X_Y` child prims,
+// positions them, forwards touches, and shows the action dialog.
+//
+// It builds an (x,y) -> link-number map from the cell names, then on the
+// controller's broadcasts it morphs the right child link between a flat tile
+// (empty / textured piece) and a 3D sculptie. Nothing renders from inside the
+// cells, so the cell prims hold NO scripts.
+//
 // Encoding must match game_controller.lsl:
 //   cell = type + owner*100 + orient*1000 + stun*10000 + bombDiag*100000
 // ============================================================
+
+integer BOARD_W = 15;
+integer BOARD_H = 11;
+float   CELL_SIZE = 1.0;   // metres per cell — match your build
 
 integer T_EMPTY     = 0;
 integer T_KING      = 1;
@@ -23,13 +34,14 @@ integer T_HYPERHOLE = 12;
 integer P_RED   = 1;
 integer P_GREEN = 2;
 
+// ---- link-message nums (must match game_controller.lsl) ----
 integer LM_CELL_UPDATE = 1;
 integer LM_HIGHLIGHT   = 2;
 integer LM_CLEAR_HL    = 3;
-integer LM_LASER_PATH  = 4;
 integer LM_GAME_OVER   = 5;
-integer LM_STATUS      = 6;
 integer LM_BEAM        = 7;
+integer LM_BOARD_FULL  = 8;   // whole-board CSV (one message, we loop)
+integer LM_RENDER_READY = 9;  // renderer -> controller: "I'm up, send the board"
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 
@@ -43,20 +55,13 @@ vector COLOR_EMPTY     = <0.20, 0.20, 0.20>;
 vector COLOR_HIGHLIGHT = <0.90, 0.90, 0.20>;
 vector COLOR_LASER_HIT = <1.0, 0.5, 0.0>;
 
-integer gMyX = -1;
-integer gMyY = -1;
-integer gHighlighted = FALSE;
-integer gCurrentCell = 0;
-key     gLastToucher = NULL_KEY;
-
 // Texture rotation per facing step. Flip the sign if pieces face the wrong way.
 float   TEX_ROT_SIGN = -1.0;
 // Which prim face is the top of your cell tiles (a default box's top = 0).
-// If the sprite shows on a side instead of the top, change this.
 integer TOP_FACE = 0;
 
-// Piece textures by type (index 0 = empty/blank). Paste your uploaded UUIDs
-// here; re-drop this script into the cells after changing them.
+// Piece textures by type (index 0 = empty/blank). Used for any piece whose
+// SCULPT entry is "" (so you can mix flat and 3D pieces).
 list TEX = [
     "5748decc-f629-461c-9a36-a35a221fe21f", //  0 empty (blank)
     "b1b31d44-39a8-05a0-3a18-66c672980228", //  1 King       (tex_king)
@@ -74,8 +79,6 @@ list TEX = [
 ];
 
 // 3D sculptie maps by type ("" = none -> the piece uses the flat texture above).
-// Upload sculpties/*_sculptmap.png with LOSSLESS compression, set the Stitching
-// from sculpties/README.md, then paste the map UUIDs here and re-drop this script.
 list SCULPT = [
     "",  //  0 empty
     "310259e5-e6f2-ccab-a55c-c7c7f03e25c5", //  1 King
@@ -127,16 +130,21 @@ list SCULPT_STITCH = [
 ];
 float   SCULPT_ROT_SIGN = -1.0;     // facing-rotation direction (flip if pieces face wrong way)
 vector  TILE_SIZE       = <1.0, 1.0, 0.05>;  // the flat cell tile (empty / textured pieces)
-float   CELL_ZOFF       = 0.20;     // local Z of the cell tiles above the root (match game_controller)
+float   CELL_ZOFF       = 0.20;     // local Z of the cell tiles above the root
 float   SCULPT_BASE_Z   = 0.0;      // extra lift of tokens above the tile top (fine-tune)
 
 // Per-type 180-degree upright flip (1 = that sculpt map is itself upside down).
-// None needed with a correctly-oriented root; set an entry to 1 if a map renders
-// inverted.
 list SCULPT_FLIP = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 //  0  1  2  3  4  5  6  7  8  9 10 11 12
 ];
+
+// ---- state ----
+list    gLink;          // index = y*BOARD_W+x  ->  child link number (-1 = missing)
+list    gCell;          // last cell value pushed for each square
+list    gHL;            // highlight flag (0/1) for each square
+key     gLastToucher = NULL_KEY;
+integer gListen = 0;
 
 // ---- decode ----
 integer cType(integer c)   { return c % 100; }
@@ -145,14 +153,7 @@ integer cOrient(integer c) { return (c / 1000) % 10; }
 integer cStun(integer c)   { return (c / 10000) % 10; }
 integer cBombDiag(integer c){ return (c / 100000) % 10; }
 
-parsePosition() {
-    string name = llGetLinkName(llGetLinkNumber());
-    if (llGetSubString(name, 0, 4) != "cell_") return;
-    list parts = llParseString2List(name, ["_"], []);
-    if (llGetListLength(parts) < 3) return;
-    gMyX = (integer)llList2String(parts, 1);
-    gMyY = (integer)llList2String(parts, 2);
-}
+integer cellIdx(integer x, integer y) { return y * BOARD_W + x; }
 
 string dirStr(integer o) {
     return llList2String(["N","NE","E","SE","S","SW","W","NW"], o);
@@ -177,19 +178,49 @@ string pieceLabel(integer cell) {
 }
 
 integer canFire(integer t) { return (t == T_LASER || t == T_STUNNER); }
-// board features cannot be selected/acted on
-integer isFeature(integer t) { return (t == T_HOLE || t == T_HYPERHOLE); }
 
-updateVisuals(integer cell) {
-    // Only render once we're a placed, linked board cell. On a standalone prim
-    // (e.g. the unlinked lc_cell template) PRIM_POS_LOCAL is the *region*
-    // position, so setting it here would fling the prim underground.
-    if (gMyX < 0) return;
-    gCurrentCell = cell;
-    integer t = cType(cell);
+// Zero the per-cell value / highlight caches (board starts empty until the
+// controller broadcasts). Only done at start-up, not on every re-link.
+initCaches() {
+    gCell = []; gHL = [];
+    integer total = BOARD_W * BOARD_H;
+    integer i;
+    for (i = 0; i < total; ++i) { gCell += [0]; gHL += [0]; }
+}
+
+// (Re)build the (x,y) -> link map by scanning every cell_X_Y child name.
+scanLinks() {
+    integer total = BOARD_W * BOARD_H;
+    gLink = [];
+    integer i;
+    for (i = 0; i < total; ++i) gLink += [-1];
+    integer n = llGetNumberOfPrims();
+    for (i = 1; i <= n; ++i) {
+        string nm = llGetLinkName(i);
+        if (llGetSubString(nm, 0, 4) == "cell_") {
+            list p = llParseString2List(nm, ["_"], []);
+            if (llGetListLength(p) >= 3) {
+                integer x = (integer)llList2String(p, 1);
+                integer y = (integer)llList2String(p, 2);
+                if (x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H) {
+                    integer idx = cellIdx(x, y);
+                    gLink = llListReplaceList(gLink, [i], idx, idx);
+                }
+            }
+        }
+    }
+}
+
+// Render one square from its cached value + highlight state. Computes the grid
+// XY itself (so no separate layout pass is needed) and morphs the child link.
+renderIdx(integer idx) {
+    integer link = llList2Integer(gLink, idx);
+    if (link < 1) return;                 // no such cell linked
+    integer cell  = llList2Integer(gCell, idx);
+    integer hl    = llList2Integer(gHL, idx);
+    integer t     = cType(cell);
     integer owner = cOwner(cell);
 
-    // Base appearance for the piece (or empty cell).
     vector col = COLOR_EMPTY;
     float  a   = 0.3;
     string label = "";
@@ -202,18 +233,19 @@ updateVisuals(integer cell) {
         if (cStun(cell)) label += "\n~STUN~";
     }
 
-    // Highlight a legal destination with glow (so an occupied capture target
-    // still shows the enemy piece's colour + label underneath). Empty targets
-    // turn yellow so they're visible on the dark board.
     float glow = 0.0;
-    if (gHighlighted) {
+    if (hl) {
         glow = 0.25;
         if (t == T_EMPTY) { col = COLOR_HIGHLIGHT; a = 1.0; }
     }
 
-    // Keep the cell's grid XY (owned by the controller's layoutCells); we only
-    // adjust Z / size / type / rotation here.
-    vector lp = llList2Vector(llGetLinkPrimitiveParams(LINK_THIS, [PRIM_POS_LOCAL]), 0);
+    // grid XY relative to the root (centered), matching the old layoutCells.
+    integer x = idx % BOARD_W;
+    integer y = idx / BOARD_W;
+    float halfW = (float)(BOARD_W - 1) * 0.5 * CELL_SIZE;
+    float halfH = (float)(BOARD_H - 1) * 0.5 * CELL_SIZE;
+    float lx = (float)x * CELL_SIZE - halfW;
+    float ly = halfH - (float)y * CELL_SIZE;
 
     string sc = "";
     if (t != T_EMPTY) sc = llList2String(SCULPT, t);
@@ -231,10 +263,10 @@ updateVisuals(integer cell) {
         // Stand the token's base on the top of the tile: prim centre = tile top
         // + half the token height. Nudge SCULPT_BASE_Z if a token floats/sinks.
         float tileTopZ = CELL_ZOFF + TILE_SIZE.z * 0.5;
-        llSetLinkPrimitiveParamsFast(LINK_THIS, [
+        llSetLinkPrimitiveParamsFast(link, [
             PRIM_TYPE, PRIM_TYPE_SCULPT, sc, llList2Integer(SCULPT_STITCH, t),
             PRIM_SIZE, sz,
-            PRIM_POS_LOCAL, <lp.x, lp.y, tileTopZ + SCULPT_BASE_Z + sz.z * 0.5>,
+            PRIM_POS_LOCAL, <lx, ly, tileTopZ + SCULPT_BASE_Z + sz.z * 0.5>,
             PRIM_ROT_LOCAL, rot,
             PRIM_COLOR, ALL_SIDES, col, a,
             PRIM_GLOW,  ALL_SIDES, glow,
@@ -243,11 +275,11 @@ updateVisuals(integer cell) {
         // Flat box tile: empty cell, or a piece without a sculpt map yet. The
         // sprite goes on the top face only (blank the rest), rotated for facing.
         float texRot = (float)cOrient(cell) * PI * 0.25 * TEX_ROT_SIGN;
-        llSetLinkPrimitiveParamsFast(LINK_THIS, [
+        llSetLinkPrimitiveParamsFast(link, [
             PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0.0,1.0,0.0>, 0.0,
                 <0.0,0.0,0.0>, <1.0,1.0,0.0>, <0.0,0.0,0.0>,
             PRIM_SIZE, TILE_SIZE,
-            PRIM_POS_LOCAL, <lp.x, lp.y, CELL_ZOFF>,
+            PRIM_POS_LOCAL, <lx, ly, CELL_ZOFF>,
             PRIM_ROT_LOCAL, ZERO_ROTATION,
             PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
             PRIM_TEXTURE, TOP_FACE,  llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
@@ -257,44 +289,57 @@ updateVisuals(integer cell) {
     }
 }
 
-setHighlight(integer on) {
-    if (gHighlighted == on) return;   // skip redundant updates (most cells)
-    gHighlighted = on;
-    updateVisuals(gCurrentCell);
+renderAll() {
+    integer total = BOARD_W * BOARD_H;
+    integer i;
+    for (i = 0; i < total; ++i) renderIdx(i);
 }
 
-// Light this cell as part of the beam (no sleep — stays lit until the
-// controller pushes a normal cell update to clear it).
-beamLight(vector c) {
-    llSetLinkPrimitiveParamsFast(LINK_THIS, [
+// Light a square as part of the beam (no sleep — restored when the controller
+// pushes a normal cell update afterward).
+beamLight(integer idx, vector c) {
+    integer link = llList2Integer(gLink, idx);
+    if (link < 1) return;
+    llSetLinkPrimitiveParamsFast(link, [
         PRIM_COLOR, ALL_SIDES, c, 1.0,
         PRIM_GLOW,  ALL_SIDES, 0.45 ]);
 }
 
-showActionDialog() {
+showActionDialog(integer x, integer y) {
     if (gLastToucher == NULL_KEY) return;
-    integer t = cType(gCurrentCell);
+    integer cell = llList2Integer(gCell, cellIdx(x, y));
+    integer t = cType(cell);
     list buttons;
     if (canFire(t)) buttons = ["Move", "Fire", "Cancel", "Rot CW", "Rot CCW"];
     else            buttons = ["Move", "Rot CW", "Rot CCW", "Cancel"];
-    llDialog(gLastToucher, "Action for " + pieceLabel(gCurrentCell)
+    if (gListen) llListenRemove(gListen);
+    gListen = llListen(DIALOG_CH, "", gLastToucher, "");
+    llDialog(gLastToucher, "Action for " + pieceLabel(cell)
         + "  (45° turns):", buttons, DIALOG_CH);
-    llListen(DIALOG_CH, "", gLastToucher, "");
 }
 
 default {
     state_entry() {
-        parsePosition();
-        if (gMyX >= 0) updateVisuals(0);   // render the blank empty cell
-        else llSetText("laser-chess cell\nlink into the board, then Reset Scripts",
-                       <1,1,0>, 1.0);       // unlinked template: leave it where it is
+        initCaches();   // empty board until the controller sends one
+        scanLinks();
+        // Ask the controller for the current board so EVERY cell renders now
+        // (positions empties too) — don't rely on catching its one-shot
+        // start-up broadcast, which a deploy/reset-order race can miss.
+        llMessageLinked(LINK_ROOT, LM_RENDER_READY, "", NULL_KEY);
+    }
+
+    changed(integer c) {
+        // On a re-link, remap link numbers but KEEP the cached board, then
+        // repaint so cells stay correct instead of blanking out.
+        if (c & CHANGED_LINK) { scanLinks(); renderAll(); }
     }
 
     touch_start(integer n) {
-        if (gMyX < 0) return;
+        integer idx = llListFindList(gLink, [llDetectedLinkNumber(0)]);
+        if (idx < 0) return;              // not one of the board cells
         gLastToucher = llDetectedKey(0);
         llMessageLinked(LINK_ROOT, LM_PIECE_TOUCH,
-            (string)gMyX + "," + (string)gMyY, NULL_KEY);
+            (string)(idx % BOARD_W) + "," + (string)(idx / BOARD_W), NULL_KEY);
     }
 
     listen(integer channel, string name, key id, string msg) {
@@ -305,47 +350,75 @@ default {
         if (msg == "Rot CCW") action = "ROTATE_CCW";
         if (msg == "Fire")    action = "FIRE";
         if (msg == "Cancel")  action = "CANCEL";
+        if (gListen) { llListenRemove(gListen); gListen = 0; }
         llMessageLinked(LINK_ROOT, LM_ACTION, action, NULL_KEY);
     }
 
     link_message(integer sender_num, integer num, string str, key id) {
-        // If we never resolved our cell name (e.g. named/linked after this
-        // script's state_entry ran), try again now that the game is talking.
-        if (gMyX < 0) parsePosition();
-
+        if (num == LM_BOARD_FULL) {
+            // whole board as one CSV: update caches and render every square.
+            list vals = llParseString2List(str, [","], []);
+            integer total = BOARD_W * BOARD_H;
+            integer cnt = llGetListLength(vals);
+            integer i;
+            for (i = 0; i < total && i < cnt; ++i) {
+                gCell = llListReplaceList(gCell, [(integer)llList2String(vals, i)], i, i);
+                renderIdx(i);
+            }
+            return;
+        }
         if (num == LM_CELL_UPDATE) {
             list p = llParseString2List(str, [","], []);
-            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY)
-                updateVisuals(llList2Integer(p,2));
+            integer idx = cellIdx(llList2Integer(p,0), llList2Integer(p,1));
+            gCell = llListReplaceList(gCell, [llList2Integer(p,2)], idx, idx);
+            renderIdx(idx);
             return;
         }
         if (num == LM_HIGHLIGHT) {
             list p = llParseString2List(str, [","], []);
-            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY)
-                setHighlight(llList2Integer(p,2));
+            integer idx = cellIdx(llList2Integer(p,0), llList2Integer(p,1));
+            integer on = llList2Integer(p,2);
+            if (llList2Integer(gHL, idx) != on) {
+                gHL = llListReplaceList(gHL, [on], idx, idx);
+                renderIdx(idx);
+            }
             return;
         }
-        if (num == LM_CLEAR_HL) { setHighlight(FALSE); return; }
+        if (num == LM_CLEAR_HL) {
+            integer total = BOARD_W * BOARD_H;
+            integer i;
+            for (i = 0; i < total; ++i) {
+                if (llList2Integer(gHL, i)) {
+                    gHL = llListReplaceList(gHL, [0], i, i);
+                    renderIdx(i);
+                }
+            }
+            return;
+        }
         if (num == LM_BEAM) {
             list p = llParseString2List(str, [","], []);
-            if (llList2Integer(p,0)==gMyX && llList2Integer(p,1)==gMyY) {
-                if (llGetListLength(p) >= 3) beamLight(<1.0, 0.12, 0.05>); // HIT
-                else                         beamLight(COLOR_LASER_HIT);    // travel
-            }
+            integer idx = cellIdx(llList2Integer(p,0), llList2Integer(p,1));
+            if (llGetListLength(p) >= 3) beamLight(idx, <1.0, 0.12, 0.05>); // HIT
+            else                         beamLight(idx, COLOR_LASER_HIT);    // travel
             return;
         }
         if (num == LM_ACTION) {
             if (llGetSubString(str,0,4) == "MENU:") {
                 list xy = llParseString2List(llGetSubString(str,5,-1), [","], []);
-                if (llList2Integer(xy,0)==gMyX && llList2Integer(xy,1)==gMyY)
-                    showActionDialog();
+                showActionDialog(llList2Integer(xy,0), llList2Integer(xy,1));
             }
             return;
         }
         if (num == LM_GAME_OVER) {
-            llSetColor(<1,1,0>, ALL_SIDES);
+            integer total = BOARD_W * BOARD_H;
+            integer i;
+            for (i = 0; i < total; ++i) {
+                integer link = llList2Integer(gLink, i);
+                if (link >= 1) llSetLinkPrimitiveParamsFast(link,
+                    [PRIM_COLOR, ALL_SIDES, <1,1,0>, 1.0]);
+            }
             llSleep(1.0);
-            updateVisuals(gCurrentCell);
+            renderAll();
             return;
         }
     }

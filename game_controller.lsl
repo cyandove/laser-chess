@@ -1,6 +1,7 @@
 // ============================================================
 // Advanced Laser Chess — Game Controller  (ALC rewrite, Phase 3)
-// Root prim of the board linkset. Children run piece.lsl.
+// Root prim of the board linkset. Rendering is done by board_renderer.lsl
+// (also a root script); the cell prims hold no scripts.
 //
 // Done: cell model (12 types, 8 orientations), full ALC starting board,
 // rendering + auto-layout, 3 actions/turn, orthogonal move (diagonal costs 2),
@@ -17,10 +18,8 @@
 integer BOARD_W = 15;
 integer BOARD_H = 11;
 
-// Physical layout (used to auto-arrange cell prims by name on start).
-float CELL_SIZE = 1.0;   // metres per cell — match your build
-float CELL_ZOFF = 0.20;  // cell lift above the root (local Z) — keep > root half-height
-                         // so the board sits above the controller prim (must match piece.lsl)
+// Cell layout (sizing, lift, the grid arrangement) now lives in
+// board_renderer.lsl, which positions each cell as it renders it.
 
 // ---- Piece types ----
 integer T_EMPTY     = 0;
@@ -53,8 +52,9 @@ integer LM_HIGHLIGHT   = 2;
 integer LM_CLEAR_HL    = 3;
 integer LM_LASER_PATH  = 4;
 integer LM_GAME_OVER   = 5;
-integer LM_STATUS      = 6;
 integer LM_BEAM        = 7;   // "x,y" -> light a beam cell; "x,y,HIT" -> emphasized
+integer LM_BOARD_FULL  = 8;   // whole board as one CSV -> board_renderer.lsl
+integer LM_RENDER_READY = 9;  // board_renderer.lsl -> us: it (re)started, wants the board
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 integer LM_AI_REQUEST  = 20;
@@ -133,52 +133,27 @@ integer dirDY(integer o) { return llList2Integer(DDY, o); }
 // ============================================================
 // MESSAGING
 // ============================================================
-// (Piece-texture UUIDs live in piece.lsl's TEX list — the cell scripts have
-// the spare memory, and they already decode the piece type for rendering.)
+// (Piece-texture/sculpt UUIDs live in board_renderer.lsl's TEX/SCULPT lists —
+// it has the spare memory, and it decodes the piece type for rendering.)
+// Renderer messages go to LINK_THIS — board_renderer.lsl is a root script, so
+// this reaches it without fanning out to the (script-less) cell prims.
 pushCell(integer x, integer y) {
-    llMessageLinked(LINK_ALL_CHILDREN, LM_CELL_UPDATE,
+    llMessageLinked(LINK_THIS, LM_CELL_UPDATE,
         (string)x+","+(string)y+","+(string)bGet(x,y), NULL_KEY);
 }
 setStatus(string s) {
-    llMessageLinked(LINK_ALL_CHILDREN, LM_STATUS, s, NULL_KEY);
     llSetText(s, <1,1,1>, 1.0);
 }
-clearHL() { llMessageLinked(LINK_ALL_CHILDREN, LM_CLEAR_HL, "", NULL_KEY); }
+clearHL() { llMessageLinked(LINK_THIS, LM_CLEAR_HL, "", NULL_KEY); }
 hlCell(integer x, integer y, integer on) {
-    llMessageLinked(LINK_ALL_CHILDREN, LM_HIGHLIGHT,
+    llMessageLinked(LINK_THIS, LM_HIGHLIGHT,
         (string)x+","+(string)y+","+(string)on, NULL_KEY);
 }
 broadcastBoard() {
-    // Push EVERY cell (not just occupied) so a full re-render clears/morphs
-    // cells that became empty — otherwise a stale sculptie/texture lingers.
-    integer x; integer y;
-    for (y=0; y<BOARD_H; ++y)
-        for (x=0; x<BOARD_W; ++x)
-            pushCell(x, y);
-}
-
-// Arrange every `cell_X_Y` child to its grid slot by NAME, relative to the
-// root, using PRIM_POS_LOCAL. This is link-order-proof: it doesn't matter how
-// or where the cells were rezzed/linked, only that they are named correctly.
-// col -> local +X (east), row -> local +Y at row 0 (north), centered on root.
-layoutCells() {
-    float halfW = (float)(BOARD_W - 1) * 0.5 * CELL_SIZE;
-    float halfH = (float)(BOARD_H - 1) * 0.5 * CELL_SIZE;
-    integer n = llGetNumberOfPrims();
-    integer i;
-    for (i = 2; i <= n; ++i) {
-        string nm = llGetLinkName(i);
-        if (llGetSubString(nm, 0, 4) == "cell_") {
-            list parts = llParseString2List(nm, ["_"], []);
-            integer col = (integer)llList2String(parts, 1);
-            integer row = (integer)llList2String(parts, 2);
-            float lx = (float)col * CELL_SIZE - halfW;
-            float ly = halfH - (float)row * CELL_SIZE;
-            llSetLinkPrimitiveParamsFast(i, [
-                PRIM_POS_LOCAL, <lx, ly, CELL_ZOFF>,
-                PRIM_ROT_LOCAL, ZERO_ROTATION ]);
-        }
-    }
+    // Hand the whole board to the renderer in ONE message (it loops and morphs
+    // every square, clearing cells that became empty). Pushing all 165 cells
+    // individually risked overflowing the renderer's event queue.
+    llMessageLinked(LINK_THIS, LM_BOARD_FULL, llDumpList2String(gBoard, ","), NULL_KEY);
 }
 
 // ============================================================
@@ -639,7 +614,7 @@ beamTick() {
     integer n = llGetListLength(gBeamCells);
 
     if (gBeamStep < n) {                 // travel: light the next cell
-        llMessageLinked(LINK_ALL_CHILDREN, LM_BEAM,
+        llMessageLinked(LINK_THIS, LM_BEAM,
             llList2String(gBeamCells, gBeamStep), NULL_KEY);
         ++gBeamStep;
         return;
@@ -647,7 +622,7 @@ beamTick() {
     if (gBeamStep == n) {                // arrived: emphasize the struck cell(s)
         integer i;
         for (i=0; i<llGetListLength(gPendingFx); ++i)
-            llMessageLinked(LINK_ALL_CHILDREN, LM_BEAM,
+            llMessageLinked(LINK_THIS, LM_BEAM,
                 llList2String(gPendingFx,i) + ",HIT", NULL_KEY);
         ++gBeamStep;
         llSetTimerEvent(HIT_HOLD);
@@ -665,7 +640,7 @@ beamTick() {
         integer winner = P_RED;
         if (loser == P_RED) winner = P_GREEN;
         setStatus(playerName(winner) + " WINS! Touch the board to restart.");
-        llMessageLinked(LINK_ALL_CHILDREN, LM_GAME_OVER, (string)winner, NULL_KEY);
+        llMessageLinked(LINK_THIS, LM_GAME_OVER, (string)winner, NULL_KEY);
         gState = GS_GAMEOVER;
         return;
     }
@@ -703,7 +678,7 @@ doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
     if (cType(captured) == T_KING) {
         integer winner = cOwner(mv);
         setStatus(playerName(winner) + " WINS by capture! Touch the board to restart.");
-        llMessageLinked(LINK_ALL_CHILDREN, LM_GAME_OVER, (string)winner, NULL_KEY);
+        llMessageLinked(LINK_THIS, LM_GAME_OVER, (string)winner, NULL_KEY);
         gState = GS_GAMEOVER;
         return;
     }
@@ -739,7 +714,7 @@ handleTouch(integer x, integer y) {
             gState = GS_SELECTED;
             clearHL();
             showDestinations();
-            llMessageLinked(LINK_ALL_CHILDREN, LM_ACTION,
+            llMessageLinked(LINK_THIS, LM_ACTION,
                 "MENU:" + (string)x + "," + (string)y, NULL_KEY);
         }
     } else if (gState == GS_AWAIT_DST) {
@@ -816,22 +791,21 @@ default {
         gState = GS_IDLE;
         gSelX = -1; gSelY = -1;
         initBoard();
-        llSleep(1.0);
-        layoutCells();      // arrange cells by name (fixes any link-order scramble)
-        broadcastBoard();
+        llSleep(1.0);       // let links settle after a reset
+        broadcastBoard();   // board_renderer.lsl lays out + renders every cell
         announceTurn();
     }
 
-    touch_start(integer n) {
-        vector st = llDetectedTouchST(0);
-        integer bx = (integer)(st.x  * (float)BOARD_W);
-        integer by = (integer)((1.0 - st.y) * (float)BOARD_H);
-        if (bOk(bx, by)) handleTouch(bx, by);
-    }
+    // Touches arrive via LM_PIECE_TOUCH from board_renderer.lsl (it maps the
+    // touched child link to a board square), so no touch_start here.
 
     timer() { beamTick(); }   // drives the laser beam playback
 
     link_message(integer sender_num, integer num, string str, key id) {
+        if (num == LM_RENDER_READY) {
+            broadcastBoard();   // renderer just (re)started — send it the board
+            return;
+        }
         if (num == LM_PIECE_TOUCH) {
             list xy = llParseString2List(str, [","], []);
             handleTouch(llList2Integer(xy,0), llList2Integer(xy,1));

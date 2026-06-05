@@ -1,5 +1,9 @@
 # Plan: Texture the existing cell prims to show pieces
 
+> **Historical plan (done).** Rendering has since moved out of the per-cell
+> `piece.lsl` into a single root-side `board_renderer.lsl`; `piece.lsl` no longer
+> exists. References to `piece.lsl` below describe the design as it was at the time.
+
 ## Context
 
 Each of the 165 board cells is a child prim running `piece.lsl`; a "piece" is currently drawn

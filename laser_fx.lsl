@@ -1,7 +1,7 @@
 // ============================================================
 // Advanced Laser Chess — Laser Beam FX (particle ribbon)
 // Drop into a SINGLE dedicated child prim named "fxbeam".
-// Works alongside the cell-flash already done by piece.lsl —
+// Works alongside the cell-flash already done by board_renderer.lsl —
 // this adds a glowing ribbon that traces the beam's actual path,
 // bends and all.
 //
