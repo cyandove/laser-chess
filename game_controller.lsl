@@ -61,8 +61,10 @@ integer LM_SELECT      = 12;  // -> board_renderer.lsl: which cell is selected (
 integer LM_RENDER_MODE = 13;  // -> renderer: "3D" / "FLAT"
 integer LM_SETUP       = 14;  // -> renderer: show setup screen "flat,ai,side"
 integer LM_CONFIRM     = 15;  // -> renderer: show reset-confirm prompt
-integer LM_BUILD_BOARD = 16;  // -> board_init.lsl: build the starting board
-integer LM_BOARD_DATA  = 17;  // board_init.lsl -> us: the starting board CSV
+integer LM_BUILD_BOARD = 16;  // -> lc_logic.lsl: build the starting board
+integer LM_BOARD_DATA  = 17;  // lc_logic.lsl -> us: the starting board CSV
+integer LM_TRACE       = 18;  // -> lc_logic.lsl: trace a shot "boardCSV|ox|oy|isStun"
+integer LM_TRACE_RESULT= 19;  // lc_logic.lsl -> us: "beamCells|pendingFx|pendingKing"
 integer LM_AI_REQUEST  = 20;
 integer LM_AI_RESPONSE = 21;
 integer LM_CONFIG      = 100;
@@ -329,97 +331,9 @@ doRotate(integer x, integer y, integer step) {
 }
 
 // ============================================================
-// BEAM PHYSICS (Phase 2)
-// Beams travel in any of the 8 directions. Mirror interactions use a
-// single vector-reflection rule:  v' = v - 2(v·n)/(n·n) n , where n is
-// the reflective face's outward normal. sign(v·n): <0 front (reflect),
-// >0 back (destroy), ==0 graze (pass). Same rule covers flat mirrors
-// (cardinal normal) and 45° deflectors (diagonal normal).
+// BEAM  — tracing lives in lc_logic.lsl (LM_TRACE/LM_TRACE_RESULT); the
+// controller fires the request, then plays back + applies the result.
 // ============================================================
-
-// direction index <- vector
-integer dirFromVec(integer dx, integer dy) {
-    integer i;
-    for (i=0; i<8; ++i)
-        if (llList2Integer(DDX,i)==dx && llList2Integer(DDY,i)==dy) return i;
-    return -1;
-}
-// reflect travel-dir d off a face whose outward normal points 'nrm'
-integer reflectOff(integer d, integer nrm) {
-    integer vx = dirDX(d);  integer vy = dirDY(d);
-    integer nx = dirDX(nrm); integer ny = dirDY(nrm);
-    integer dot = vx*nx + vy*ny;
-    integer nn  = nx*nx + ny*ny;          // 1 cardinal, 2 diagonal
-    integer f   = (2*dot) / nn;
-    return dirFromVec(vx - f*nx, vy - f*ny);
-}
-integer dotDir(integer d, integer nrm) {
-    return dirDX(d)*dirDX(nrm) + dirDY(d)*dirDY(nrm);
-}
-// the two directions perpendicular (±90°) to d
-list perpDirs(integer d) {
-    return [(d+2)%8, (d+6)%8];
-}
-integer inShieldArc(integer face, integer o) {
-    return (face==o || face==(o+1)%8 || face==(o+7)%8);
-}
-
-// What happens when a beam travelling 'd' enters cell (x,y)?
-// Returns: pass | absorb | random | hit | king | reflect:D | split:D1:D2
-string laserInteract(integer x, integer y, integer d) {
-    integer cell = bGet(x,y);
-    integer t = cType(cell);
-    integer o = cOrient(cell);
-
-    if (t == T_EMPTY)                       return "pass";
-    if (t == T_HOLE || t == T_HYPERHOLE)    return "absorb";
-    if (t == T_HYPERGON)                    return "random";
-    if (t == T_KING)                        return "king";
-    if (t == T_LASER || t == T_STUNNER) return "hit";
-    if (t == T_BOMB) {
-        // Bomb detonates ("center") when struck along an arm: orthogonal bomb on
-        // a cardinal beam, diagonal bomb on a diagonal beam. Otherwise side hit.
-        integer dDiag = (d % 2);   // 1 if the beam travels diagonally
-        integer detonate;
-        if (cBombDiag(cell)) detonate = dDiag;
-        else                 detonate = (1 - dDiag);
-        if (detonate) return "bomb:1";
-        return "bomb:0";
-    }
-    if (t == T_FOCT)                        return "reflect:" + (string)((d+4)%8);
-
-    if (t == T_POCT) {
-        integer face = (d+4)%8;             // face the beam strikes
-        if (inShieldArc(face, o)) return "reflect:" + (string)((d+4)%8);
-        return "hit";
-    }
-
-    if (t == T_ONEWAY) {                    // arrow points cardinal o
-        integer dt = dotDir(d, o);
-        if (dt > 0) return "pass";                      // with the arrow
-        if (dt < 0) return "reflect:" + (string)reflectOff(d, o); // against
-        return "hit";                                   // perpendicular destroys
-    }
-
-    if (t == T_SPLITTER) {                  // vertex points cardinal o
-        if (d == (o+4)%8) {                 // head-on into the vertex
-            list pc = perpDirs(d);
-            return "split:" + (string)llList2Integer(pc,0)
-                       + ":" + (string)llList2Integer(pc,1);
-        }
-        if (d == o) return "hit";           // back face exposed
-        return "pass";                      // off-axis / diagonal: misses
-    }
-
-    if (t == T_TRIMIR) {                    // normal = orient (flat or 45°)
-        integer dt = dotDir(d, o);
-        if (dt == 0) return "pass";         // graze
-        if (dt > 0)  return "hit";          // back face -> destroy
-        return "reflect:" + (string)reflectOff(d, o);
-    }
-
-    return "absorb";
-}
 
 // apply weapon effect to the piece at (x,y)
 applyHit(integer x, integer y, integer isStun) {
@@ -429,95 +343,6 @@ applyHit(integer x, integer y, integer isStun) {
     else
         bSet(x, y, 0);
     pushCell(x, y);
-}
-
-// Queue a cell to be hit when the beam arrives (deduped).
-addFx(integer x, integer y) {
-    string cellKey = (string)x + "," + (string)y;
-    if (llListFindList(gPendingFx, [cellKey]) < 0) gPendingFx += [cellKey];
-}
-
-// Queue a bomb's effect (no mutation yet). center=1 -> the 8 neighbours (+ the
-// bomb itself for a laser); center=0 -> bomb only. A King neighbour (laser)
-// sets gPendingKing.
-queueBomb(integer x, integer y, integer center) {
-    if (center) {
-        integer o;
-        for (o=0; o<8; ++o) {
-            integer nx = x + dirDX(o);
-            integer ny = y + dirDY(o);
-            if (bOk(nx,ny)) {
-                integer nt = cType(bGet(nx,ny));
-                if (nt != T_EMPTY && nt != T_HOLE && nt != T_HYPERHOLE) {
-                    if (!gFireIsStun && nt == T_KING)
-                        gPendingKing = "king:" + (string)cOwner(bGet(nx,ny));
-                    addFx(nx, ny);
-                }
-            }
-        }
-        if (!gFireIsStun) addFx(x, y);   // laser also destroys the bomb
-    } else {
-        addFx(x, y);                     // side hit: bomb only
-    }
-}
-
-// Trace a beam from weapon at (ox,oy) WITHOUT mutating the board. Fills
-// gBeamCells (ordered path), gPendingFx (cells to destroy/stun on impact) and
-// gPendingKing. The board only changes later, when the beam reaches its target.
-traceBeam(integer ox, integer oy, integer isStun) {
-    gBeamCells   = [(string)ox + "," + (string)oy];
-    gPendingFx   = [];
-    gPendingKing = "";
-    gFireIsStun  = isStun;
-
-    integer startDir = cOrient(bGet(ox,oy));
-    list queue = [ox, oy, startDir];        // DFS: pop front, prepend
-    list visited = [];
-    integer maxSteps = 256;
-
-    while (llGetListLength(queue) >= 3 && maxSteps > 0) {
-        --maxSteps;
-        integer cx = llList2Integer(queue,0);
-        integer cy = llList2Integer(queue,1);
-        integer cd = llList2Integer(queue,2);
-        queue = llDeleteSubList(queue, 0, 2);
-
-        integer nx = cx + dirDX(cd);
-        integer ny = cy + dirDY(cd);
-        if (!bOk(nx,ny)) jump nxt;
-
-        integer vkey = (ny*BOARD_W + nx)*8 + cd;  // packed (cell,dir) — compact
-        if (llListFindList(visited,[vkey]) >= 0) jump nxt;
-        visited += [vkey];
-
-        gBeamCells += [(string)nx + "," + (string)ny];
-        string res = laserInteract(nx, ny, cd);
-
-        if (res == "pass") {
-            queue = [nx, ny, cd] + queue;
-        } else if (llGetSubString(res,0,6) == "reflect") {
-            integer rd = (integer)llGetSubString(res,8,-1);
-            queue = [nx, ny, rd] + queue;
-        } else if (llGetSubString(res,0,4) == "split") {
-            list pp = llParseString2List(res,[":"],[]);
-            integer d1 = (integer)llList2String(pp,1);
-            integer d2 = (integer)llList2String(pp,2);
-            queue = [nx, ny, d1, nx, ny, d2] + queue;
-        } else if (res == "random") {
-            integer rr = (integer)llFrand(8.0);
-            queue = [nx, ny, rr] + queue;
-        } else if (res == "hit") {
-            addFx(nx, ny);
-        } else if (llGetSubString(res,0,3) == "bomb") {
-            queueBomb(nx, ny, (integer)llGetSubString(res,5,-1));
-        } else if (res == "king") {
-            addFx(nx, ny);   // King cell gets the hit (emphasized; removed on a laser)
-            if (!isStun) gPendingKing = "king:" + (string)cOwner(bGet(nx,ny));
-        }
-        // "absorb" -> beam ends here
-
-        @nxt;
-    }
 }
 
 // Apply the queued effects (called when the beam reaches its target).
@@ -551,17 +376,26 @@ doFire() {
         setStatus("That weapon already fired this turn.");
         return;
     }
-    integer isStun = (t == T_STUNNER);
-    traceBeam(gSelX, gSelY, isStun);
+    gFireIsStun = (t == T_STUNNER);
     gFired += [idx];        // this weapon has fired this turn
-
     clearHL();
-    gState = GS_FIRING;     // ignore input while the beam plays
-    gBeamStep = 0;
+    gState = GS_FIRING;     // ignore input until the trace comes back + plays
     setStatus(playerName(gCurPlayer) + " fires…");
-    // hand the full path to the ribbon FX prim (laser_fx.lsl)
+    // ask lc_logic.lsl to trace the shot; playback starts on LM_TRACE_RESULT.
+    llMessageLinked(LINK_THIS, LM_TRACE,
+        llDumpList2String(gBoard, ",") + "|" + (string)gSelX + "|"
+        + (string)gSelY + "|" + (string)gFireIsStun, NULL_KEY);
+}
+
+// The trace came back: stash it and start the beam playback.
+startBeam(string result) {
+    list parts = llParseStringKeepNulls(result, ["|"], []);
+    gBeamCells   = llParseString2List(llList2String(parts,0), [";"], []);
+    gPendingFx   = llParseString2List(llList2String(parts,1), [";"], []);
+    gPendingKing = llList2String(parts, 2);
+    gBeamStep = 0;
     llMessageLinked(LINK_ALL_CHILDREN, LM_LASER_PATH,
-        llDumpList2String(gBeamCells, ";"), NULL_KEY);
+        llDumpList2String(gBeamCells, ";"), NULL_KEY);   // ribbon FX
     llSetTimerEvent(BEAM_STEP);
 }
 
@@ -838,8 +672,12 @@ default {
             repaint();
             return;
         }
-        if (num == LM_BOARD_DATA) {   // board_init streamed a fresh starting board
+        if (num == LM_BOARD_DATA) {   // lc_logic streamed a fresh starting board
             beginGame(str);
+            return;
+        }
+        if (num == LM_TRACE_RESULT) { // lc_logic traced the shot — play it back
+            startBeam(str);
             return;
         }
         if (num == LM_PIECE_TOUCH) {
