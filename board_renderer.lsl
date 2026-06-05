@@ -44,8 +44,7 @@ integer LM_BOARD_FULL  = 8;   // whole-board CSV (one message, we loop)
 integer LM_RENDER_READY = 9;  // renderer -> controller: "I'm up, send the board"
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
-
-integer DIALOG_CH = -987654;
+integer LM_SELECT      = 12;  // controller -> us: which cell is selected ("x,y" / "-1,-1")
 
 // ---- appearance ----
 vector COLOR_RED       = <0.85, 0.12, 0.12>;
@@ -144,7 +143,7 @@ list    gLink;          // index = y*BOARD_W+x  ->  child link number (-1 = miss
 list    gCell;          // last cell value pushed for each square
 list    gHL;            // highlight flag (0/1) for each square
 key     gLastToucher = NULL_KEY;
-integer gListen = 0;
+integer gSelIdx = -1;   // cell index of the selected piece (-1 = none)
 
 // Side control buttons (named ctl_*_ccw / _cw / _fire). Parallel lists:
 // gCtlLink[i] is a child link, gCtlAction[i] the action it fires on the
@@ -184,6 +183,12 @@ string pieceLabel(integer cell) {
 }
 
 integer canFire(integer t) { return (t == T_LASER || t == T_STUNNER); }
+
+// Floating hint appended to the selected piece's label.
+string selectHint(integer cell) {
+    if (canFire(cType(cell))) return "\n[◀turn · fire▲ · turn▶]";
+    return "\n[◀turn · turn▶]";
+}
 
 // Zero the per-cell value / highlight caches (board starts empty until the
 // controller broadcasts). Only done at start-up, not on every re-link.
@@ -251,6 +256,7 @@ renderIdx(integer idx) {
         else                       col = COLOR_NEUTRAL;
         label = pieceLabel(cell);
         if (cStun(cell)) label += "\n~STUN~";
+        if (idx == gSelIdx) label += selectHint(cell);
     }
 
     float glow = 0.0;
@@ -325,17 +331,24 @@ beamLight(integer idx, vector c) {
         PRIM_GLOW,  ALL_SIDES, 0.45 ]);
 }
 
-showActionDialog(integer x, integer y) {
-    if (gLastToucher == NULL_KEY) return;
-    integer cell = llList2Integer(gCell, cellIdx(x, y));
-    integer t = cType(cell);
-    list buttons;
-    if (canFire(t)) buttons = ["Move", "Fire", "Cancel", "Rot CW", "Rot CCW"];
-    else            buttons = ["Move", "Rot CW", "Rot CCW", "Cancel"];
-    if (gListen) llListenRemove(gListen);
-    gListen = llListen(DIALOG_CH, "", gLastToucher, "");
-    llDialog(gLastToucher, "Action for " + pieceLabel(cell)
-        + "  (45° turns):", buttons, DIALOG_CH);
+// Resolve what a click on the *selected* piece means, from where on it the click
+// landed relative to its facing: the front quadrant fires (weapons only), the
+// left flank turns CCW, the right flank turns CW.
+string zoneAction(integer idx) {
+    integer link = llList2Integer(gLink, idx);
+    integer cell = llList2Integer(gCell, idx);
+    vector hit = llDetectedTouchPos(0);
+    vector c   = llList2Vector(llGetLinkPrimitiveParams(link, [PRIM_POSITION]), 0);
+    vector off = (hit - c) / llGetRootRotation();   // click offset in board-local axes
+    // facing unit vector in board-local space (x=east, y=north); orient 0 = N.
+    float ang = (float)cOrient(cell) * PI * 0.25;
+    float fx = llSin(ang);
+    float fy = llCos(ang);
+    float fwd  = off.x * fx + off.y * fy;            // toward the facing
+    float side = -off.x * fy + off.y * fx;           // + = left of facing
+    if (canFire(cType(cell)) && fwd > 0.0 && (fwd*fwd) > (side*side)) return "FIRE";
+    if (side >= 0.0) return "ROTATE_CCW";
+    return "ROTATE_CW";
 }
 
 default {
@@ -365,20 +378,12 @@ default {
         integer idx = llListFindList(gLink, [link]);
         if (idx < 0) return;              // not a board cell or a control
         gLastToucher = llDetectedKey(0);
+        if (idx == gSelIdx) {             // click on the selected piece: rotate/fire by zone
+            llMessageLinked(LINK_ROOT, LM_ACTION, zoneAction(idx), NULL_KEY);
+            return;
+        }
         llMessageLinked(LINK_ROOT, LM_PIECE_TOUCH,
             (string)(idx % BOARD_W) + "," + (string)(idx / BOARD_W), NULL_KEY);
-    }
-
-    listen(integer channel, string name, key id, string msg) {
-        if (channel != DIALOG_CH) return;
-        string action = "CANCEL";
-        if (msg == "Move")    action = "MOVE";
-        if (msg == "Rot CW")  action = "ROTATE_CW";
-        if (msg == "Rot CCW") action = "ROTATE_CCW";
-        if (msg == "Fire")    action = "FIRE";
-        if (msg == "Cancel")  action = "CANCEL";
-        if (gListen) { llListenRemove(gListen); gListen = 0; }
-        llMessageLinked(LINK_ROOT, LM_ACTION, action, NULL_KEY);
     }
 
     link_message(integer sender_num, integer num, string str, key id) {
@@ -429,10 +434,16 @@ default {
             else                         beamLight(idx, COLOR_LASER_HIT);    // travel
             return;
         }
-        if (num == LM_ACTION) {
-            if (llGetSubString(str,0,4) == "MENU:") {
-                list xy = llParseString2List(llGetSubString(str,5,-1), [","], []);
-                showActionDialog(llList2Integer(xy,0), llList2Integer(xy,1));
+        if (num == LM_SELECT) {
+            list p = llParseString2List(str, [","], []);
+            integer nx = llList2Integer(p, 0);
+            integer newSel = -1;
+            if (nx >= 0) newSel = cellIdx(nx, llList2Integer(p, 1));
+            if (newSel != gSelIdx) {
+                integer old = gSelIdx;
+                gSelIdx = newSel;
+                if (old >= 0)    renderIdx(old);     // drop the hint
+                if (newSel >= 0) renderIdx(newSel);  // add the hint
             }
             return;
         }
