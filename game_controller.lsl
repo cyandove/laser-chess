@@ -58,6 +58,8 @@ integer LM_RENDER_READY = 9;  // board_renderer.lsl -> us: it (re)started, wants
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 integer LM_SELECT      = 12;  // -> board_renderer.lsl: which cell is selected ("x,y" / "-1,-1")
+integer LM_RENDER_MODE = 13;  // -> renderer: "3D" / "FLAT"
+integer LM_TILE        = 14;  // -> renderer: paint a labeled tile "x,y,r,g,b,label"
 integer LM_AI_REQUEST  = 20;
 integer LM_AI_RESPONSE = 21;
 integer LM_CONFIG      = 100;
@@ -68,6 +70,7 @@ integer GS_SELECTED = 1;
 integer GS_AWAIT_DST= 2;
 integer GS_GAMEOVER = 3;
 integer GS_FIRING   = 4;   // beam animation playing; input ignored
+integer GS_SETUP    = 5;   // pre-game menu drawn on the tiles
 
 integer ACTIONS_PER_TURN = 3;
 
@@ -84,6 +87,7 @@ integer gSelX;
 integer gSelY;
 integer gAIEnabled;
 integer gAIPlayer;
+integer gFlatMode;      // TRUE = force flat textured pieces (set on the setup screen)
 
 // Rotation-refund tracking (per turn): for each rotated piece, its board
 // index, its orientation when first rotated this turn, and how many rotation
@@ -688,6 +692,66 @@ doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
     spendActions(cost);
 }
 
+// ---- Pre-game setup screen ----
+sendRenderMode() {
+    string m = "3D"; if (gFlatMode) m = "FLAT";
+    llMessageLinked(LINK_THIS, LM_RENDER_MODE, m, NULL_KEY);
+}
+setTile(integer x, integer y, vector col, string label) {
+    llMessageLinked(LINK_THIS, LM_TILE,
+        (string)x + "," + (string)y + ","
+        + (string)col.x + "," + (string)col.y + "," + (string)col.z + ","
+        + label, NULL_KEY);
+}
+// Paint the four option buttons for the current settings.
+paintSetup() {
+    if (gFlatMode) setTile(3, 1, <0.20,0.45,0.75>, "Pieces\nFLAT");
+    else           setTile(3, 1, <0.20,0.45,0.75>, "Pieces\n3D");
+
+    if (gAIEnabled) setTile(5, 1, <0.12,0.70,0.18>, "AI\nON");
+    else            setTile(5, 1, <0.40,0.40,0.45>, "AI\nOFF");
+
+    if (!gAIEnabled)             setTile(9, 1, <0.25,0.25,0.28>, "AI plays\n--");
+    else if (gAIPlayer == P_RED) setTile(9, 1, <0.85,0.12,0.12>, "AI plays\nRED");
+    else                         setTile(9, 1, <0.12,0.70,0.18>, "AI plays\nGREEN");
+
+    setTile(11, 1, <0.10,0.80,0.20>, "START >");
+}
+// Draw the whole setup screen: blank board + the northern-hole anchor + buttons.
+showSetup() {
+    gBoard = [];
+    integer i;
+    for (i = 0; i < BOARD_W * BOARD_H; ++i) gBoard += [0];
+    bSet(7, 1, mkCell(T_HOLE, O_NONE, 0, 0, 0));
+    broadcastBoard();
+    paintSetup();
+}
+startGame() {
+    initBoard();
+    gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
+    gState = GS_IDLE; gSelX = -1; gSelY = -1;
+    resetTurnState();
+    broadcastBoard();
+    announceTurn();        // kicks the AI if it happens to play Red
+}
+handleSetupTouch(integer x, integer y) {
+    if (y != 1) return;
+    if (x == 3)      { gFlatMode = !gFlatMode; sendRenderMode(); paintSetup(); }
+    else if (x == 5) { gAIEnabled = !gAIEnabled; paintSetup(); }
+    else if (x == 9) {
+        if (gAIEnabled) {
+            if (gAIPlayer == P_RED) gAIPlayer = P_GREEN; else gAIPlayer = P_RED;
+            paintSetup();
+        }
+    }
+    else if (x == 11) startGame();
+}
+// Paint whatever the current state should show (used on the renderer handshake).
+repaint() {
+    if (gState == GS_SETUP) showSetup();
+    else broadcastBoard();
+}
+
 // True if (x,y) holds a piece the current player can pick up this turn.
 integer canSelect(integer x, integer y) {
     integer cell = bGet(x, y);
@@ -718,6 +782,7 @@ reselectAfter(integer x, integer y) {
 }
 
 handleTouch(integer x, integer y) {
+    if (gState == GS_SETUP) { handleSetupTouch(x, y); return; }
     if (gState == GS_FIRING) return;            // ignore touches while a beam plays
     if (gState == GS_GAMEOVER) {
         llSetTimerEvent(0.0);
@@ -800,14 +865,14 @@ default {
     state_entry() {
         gAIEnabled = FALSE;
         gAIPlayer  = P_GREEN;
+        gFlatMode  = FALSE;
         gCurPlayer = P_RED;
         gActionsLeft = ACTIONS_PER_TURN;
-        gState = GS_IDLE;
+        gState = GS_SETUP;
         gSelX = -1; gSelY = -1;
-        initBoard();
         llSleep(1.0);       // let links settle after a reset
-        broadcastBoard();   // board_renderer.lsl lays out + renders every cell
-        announceTurn();
+        sendRenderMode();
+        showSetup();        // boot into the pre-game menu
     }
 
     // Touches arrive via LM_PIECE_TOUCH from board_renderer.lsl (it maps the
@@ -817,7 +882,8 @@ default {
 
     link_message(integer sender_num, integer num, string str, key id) {
         if (num == LM_RENDER_READY) {
-            broadcastBoard();   // renderer just (re)started — send it the board
+            sendRenderMode();   // renderer just (re)started — resync mode + screen
+            repaint();
             return;
         }
         if (num == LM_PIECE_TOUCH) {
@@ -838,12 +904,10 @@ default {
             else if (str == "AI_GREEN")gAIPlayer  = P_GREEN;
             else if (str == "RESET") {
                 llSetTimerEvent(0.0);   // cancel any beam in flight
-                initBoard();
-                gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
-                gState = GS_IDLE; gSelX = -1; gSelY = -1;
+                gState = GS_SETUP; gSelX = -1; gSelY = -1;
                 resetTurnState();
-                clearHL(); broadcastBoard();
-                announceTurn();
+                llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);
+                showSetup();            // back to the pre-game menu
             }
         }
     }

@@ -45,6 +45,8 @@ integer LM_RENDER_READY = 9;  // renderer -> controller: "I'm up, send the board
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 integer LM_SELECT      = 12;  // controller -> us: which cell is selected ("x,y" / "-1,-1")
+integer LM_RENDER_MODE = 13;  // controller -> us: "3D" / "FLAT" (global piece style)
+integer LM_TILE        = 14;  // controller -> us: paint a labeled tile "x,y,r,g,b,label"
 
 // ---- appearance ----
 vector COLOR_RED       = <0.85, 0.12, 0.12>;
@@ -144,6 +146,7 @@ list    gCell;          // last cell value pushed for each square
 list    gHL;            // highlight flag (0/1) for each square
 key     gLastToucher = NULL_KEY;
 integer gSelIdx = -1;   // cell index of the selected piece (-1 = none)
+integer gFlatMode = FALSE;  // TRUE = force flat textured pieces (ignore SCULPT[])
 
 // Side control buttons (named ctl_*_ccw / _cw / _fire). Parallel lists:
 // gCtlLink[i] is a child link, gCtlAction[i] the action it fires on the
@@ -236,6 +239,15 @@ scanLinks() {
     }
 }
 
+// Local XY of a cell relative to the root (centered grid). Z is left to the caller.
+vector cellLocalXY(integer idx) {
+    integer x = idx % BOARD_W;
+    integer y = idx / BOARD_W;
+    float halfW = (float)(BOARD_W - 1) * 0.5 * CELL_SIZE;
+    float halfH = (float)(BOARD_H - 1) * 0.5 * CELL_SIZE;
+    return <(float)x * CELL_SIZE - halfW, halfH - (float)y * CELL_SIZE, 0.0>;
+}
+
 // Render one square from its cached value + highlight state. Computes the grid
 // XY itself (so no separate layout pass is needed) and morphs the child link.
 renderIdx(integer idx) {
@@ -265,16 +277,12 @@ renderIdx(integer idx) {
         if (t == T_EMPTY) { col = COLOR_HIGHLIGHT; a = 1.0; }
     }
 
-    // grid XY relative to the root (centered), matching the old layoutCells.
-    integer x = idx % BOARD_W;
-    integer y = idx / BOARD_W;
-    float halfW = (float)(BOARD_W - 1) * 0.5 * CELL_SIZE;
-    float halfH = (float)(BOARD_H - 1) * 0.5 * CELL_SIZE;
-    float lx = (float)x * CELL_SIZE - halfW;
-    float ly = halfH - (float)y * CELL_SIZE;
+    vector lp = cellLocalXY(idx);
+    float lx = lp.x;
+    float ly = lp.y;
 
     string sc = "";
-    if (t != T_EMPTY) sc = llList2String(SCULPT, t);
+    if (t != T_EMPTY && !gFlatMode) sc = llList2String(SCULPT, t);
 
     if (sc != "") {
         // 3D sculptie piece: morph the prim and rotate it to face its orientation.
@@ -319,6 +327,24 @@ renderAll() {
     integer total = BOARD_W * BOARD_H;
     integer i;
     for (i = 0; i < total; ++i) renderIdx(i);
+}
+
+// Paint a flat labeled tile (setup-screen buttons, confirm prompts) — a plain
+// coloured box with hovertext, bypassing piece/sculpt logic.
+paintTile(integer idx, vector col, string label) {
+    integer link = llList2Integer(gLink, idx);
+    if (link < 1) return;
+    vector lp = cellLocalXY(idx);
+    llSetLinkPrimitiveParamsFast(link, [
+        PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0.0,1.0,0.0>, 0.0,
+            <0.0,0.0,0.0>, <1.0,1.0,0.0>, <0.0,0.0,0.0>,
+        PRIM_SIZE, TILE_SIZE,
+        PRIM_POS_LOCAL, <lp.x, lp.y, CELL_ZOFF>,
+        PRIM_ROT_LOCAL, ZERO_ROTATION,
+        PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
+        PRIM_COLOR, ALL_SIDES, col, 1.0,
+        PRIM_GLOW,  ALL_SIDES, 0.0,
+        PRIM_TEXT,  label, <1,1,1>, 1.0 ]);
 }
 
 // Light a square as part of the beam (no sleep — restored when the controller
@@ -432,6 +458,18 @@ default {
             integer idx = cellIdx(llList2Integer(p,0), llList2Integer(p,1));
             if (llGetListLength(p) >= 3) beamLight(idx, <1.0, 0.12, 0.05>); // HIT
             else                         beamLight(idx, COLOR_LASER_HIT);    // travel
+            return;
+        }
+        if (num == LM_RENDER_MODE) {
+            gFlatMode = (str == "FLAT");
+            renderAll();
+            return;
+        }
+        if (num == LM_TILE) {
+            list p = llParseString2List(str, [","], []);
+            integer idx = cellIdx(llList2Integer(p,0), llList2Integer(p,1));
+            paintTile(idx, <llList2Float(p,2), llList2Float(p,3), llList2Float(p,4)>,
+                llList2String(p, 5));
             return;
         }
         if (num == LM_SELECT) {
