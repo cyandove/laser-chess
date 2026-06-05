@@ -247,7 +247,8 @@ scanLinks() {
 // Measure the tile unit from the board's scale (renderer lives in the root):
 // root width / BOARD_W. Resizing the board re-measures via CHANGED_SCALE.
 measureUnit() {
-    gUnit = llGetScale().x / (float)BOARD_W;
+    vector s = llGetScale();   // LSL can't do llGetScale().x directly
+    gUnit = s.x / (float)BOARD_W;
     if (gUnit <= 0.0) gUnit = 1.0;
 }
 
