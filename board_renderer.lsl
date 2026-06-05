@@ -50,7 +50,8 @@ integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 integer LM_SELECT      = 12;  // controller -> us: which cell is selected ("x,y" / "-1,-1")
 integer LM_RENDER_MODE = 13;  // controller -> us: "3D" / "FLAT" (global piece style)
-integer LM_TILE        = 14;  // controller -> us: paint a labeled tile "x,y,r,g,b,label"
+integer LM_SETUP       = 14;  // controller -> us: draw setup screen "flat,ai,side"
+integer LM_CONFIRM     = 15;  // controller -> us: draw the reset-confirm prompt
 
 // ---- appearance ----
 vector COLOR_RED       = <0.85, 0.12, 0.12>;
@@ -360,6 +361,29 @@ paintTile(integer idx, vector col, string label) {
         PRIM_TEXT,  label, <1,1,1>, 1.0 ]);
 }
 
+// Draw the pre-game setup screen: a dark board, the northern-hole anchor, and
+// the four option buttons. flat/ai/side are the controller's current settings.
+renderSetup(integer flat, integer ai, integer side) {
+    integer total = BOARD_W * BOARD_H;
+    integer i;
+    for (i = 0; i < total; ++i) paintTile(i, <0.10,0.10,0.12>, "");
+    integer h = cellIdx(7, 1);                 // render the real hole as the anchor
+    gCell = llListReplaceList(gCell, [11], h, h);
+    renderIdx(h);
+
+    string pcs = "Pieces\n3D"; if (flat) pcs = "Pieces\nFLAT";
+    paintTile(cellIdx(3, 1), <0.20,0.45,0.75>, pcs);
+
+    if (ai) paintTile(cellIdx(5, 1), <0.12,0.70,0.18>, "AI\nON");
+    else    paintTile(cellIdx(5, 1), <0.40,0.40,0.45>, "AI\nOFF");
+
+    if (!ai)            paintTile(cellIdx(9, 1), <0.25,0.25,0.28>, "AI plays\n--");
+    else if (side == 1) paintTile(cellIdx(9, 1), <0.85,0.12,0.12>, "AI plays\nRED");
+    else                paintTile(cellIdx(9, 1), <0.12,0.70,0.18>, "AI plays\nGREEN");
+
+    paintTile(cellIdx(11, 1), <0.10,0.80,0.20>, "START >");
+}
+
 // Light a square as part of the beam (no sleep — restored when the controller
 // pushes a normal cell update afterward).
 beamLight(integer idx, vector c) {
@@ -481,11 +505,14 @@ default {
             renderAll();
             return;
         }
-        if (num == LM_TILE) {
+        if (num == LM_SETUP) {
             list p = llParseString2List(str, [","], []);
-            integer idx = cellIdx(llList2Integer(p,0), llList2Integer(p,1));
-            paintTile(idx, <llList2Float(p,2), llList2Float(p,3), llList2Float(p,4)>,
-                llList2String(p, 5));
+            renderSetup(llList2Integer(p,0), llList2Integer(p,1), llList2Integer(p,2));
+            return;
+        }
+        if (num == LM_CONFIRM) {
+            paintTile(cellIdx(6, 5), <0.85,0.30,0.10>, "CONFIRM\nreset");
+            paintTile(cellIdx(8, 5), <0.35,0.35,0.40>, "CANCEL");
             return;
         }
         if (num == LM_SELECT) {
