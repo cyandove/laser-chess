@@ -207,9 +207,10 @@ initCaches() {
 string ctlAction(string nm) {
     list p = llParseString2List(nm, ["_"], []);
     string suf = llList2String(p, llGetListLength(p) - 1);
-    if (suf == "ccw")  return "ROTATE_CCW";
-    if (suf == "cw")   return "ROTATE_CW";
-    if (suf == "fire") return "FIRE";
+    if (suf == "ccw")   return "ROTATE_CCW";
+    if (suf == "cw")    return "ROTATE_CW";
+    if (suf == "fire")  return "FIRE";
+    if (suf == "reset") return "RESET";
     return "";
 }
 

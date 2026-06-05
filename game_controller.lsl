@@ -71,6 +71,7 @@ integer GS_AWAIT_DST= 2;
 integer GS_GAMEOVER = 3;
 integer GS_FIRING   = 4;   // beam animation playing; input ignored
 integer GS_SETUP    = 5;   // pre-game menu drawn on the tiles
+integer GS_CONFIRM_RESET = 6;  // modal "reset the game?" prompt
 
 integer ACTIONS_PER_TURN = 3;
 
@@ -752,6 +753,18 @@ repaint() {
     else broadcastBoard();
 }
 
+// Reset control -> confirm before wiping the game (two tiles by the centre hole).
+requestReset() {
+    if (gState == GS_SETUP || gState == GS_CONFIRM_RESET || gState == GS_FIRING) return;
+    gState = GS_CONFIRM_RESET;
+    gSelX = -1; gSelY = -1;
+    clearHL();
+    llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);
+    setTile(6, 5, <0.85,0.30,0.10>, "CONFIRM\nreset");
+    setTile(8, 5, <0.35,0.35,0.40>, "CANCEL");
+    setStatus("Reset the game?");
+}
+
 // True if (x,y) holds a piece the current player can pick up this turn.
 integer canSelect(integer x, integer y) {
     integer cell = bGet(x, y);
@@ -783,6 +796,19 @@ reselectAfter(integer x, integer y) {
 
 handleTouch(integer x, integer y) {
     if (gState == GS_SETUP) { handleSetupTouch(x, y); return; }
+    if (gState == GS_CONFIRM_RESET) {
+        if (x == 6 && y == 5) {                 // confirm -> back to setup
+            llSetTimerEvent(0.0);
+            gState = GS_SETUP; gSelX = -1; gSelY = -1;
+            resetTurnState();
+            showSetup();
+        } else if (x == 8 && y == 5) {          // cancel -> resume play
+            gState = GS_IDLE; gSelX = -1; gSelY = -1;
+            pushCell(6, 5); pushCell(8, 5);     // restore the two overlaid cells
+            announceTurn();
+        }
+        return;
+    }
     if (gState == GS_FIRING) return;            // ignore touches while a beam plays
     if (gState == GS_GAMEOVER) {
         llSetTimerEvent(0.0);
@@ -814,6 +840,7 @@ handleTouch(integer x, integer y) {
 }
 
 handleAction(string action) {
+    if (action == "RESET") { requestReset(); return; }   // reset button, any time
     // Need a selected piece; ignore while a beam plays or the game is over
     // (control buttons + click-zones are always live, unlike the old menu).
     if (gSelX < 0 || gState == GS_GAMEOVER || gState == GS_FIRING) return;
