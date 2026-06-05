@@ -60,14 +60,17 @@ need to name the cells; exact placement is handled in-script.)
 > *only* thing naming the cells. Never run it after the rezzer (Workflow A) — it will
 > overwrite the rezzer's correct `cell_X_Y` names with link-order ones and scramble the board.
 
-`CELL_SIZE` defaults to `1.0`m (a 15×11m board) — keep it identical across
-`builder_rezzer.lsl`, `builder_cell_onrez.lsl`, and `builder_layout.lsl` if you change it.
+`CELL_SIZE` defaults to `1.0`m (a 15×11m board). `board_renderer.lsl` sets the **final**
+cell spacing as it renders, so its `CELL_SIZE` is the authoritative one — keep the builders'
+`CELL_SIZE` (`builder_rezzer.lsl`, `builder_cell_onrez.lsl`, `builder_layout.lsl`) matching it
+so cells rez near their final spots.
 
-## Touch UV mapping
+## Touch handling
 
-The root prim's flat face (the board) must be oriented so that UV (0,0) = northwest corner
-and UV (1,1) = southeast corner.  Standard SL prim face mapping works if the board prim
-is a flat box lying horizontally and you use the top face.
+Touches are resolved **per cell**: `board_renderer.lsl` (a root script) reads the touched
+child prim's link number and maps it back to a board square via the cell's `cell_X_Y` name.
+You click the cell prims directly, so **no special board-face UV mapping is needed** (the old
+root-face UV requirement is gone).
 
 ## Piece colours
 
@@ -170,6 +173,6 @@ See `ALC_DESIGN.md` for the full model and beam rules.
 ## Gameplay
 
 See **[INSTRUCTIONS.md](INSTRUCTIONS.md)** for the rules, the full piece roster, how
-the laser/mirrors behave, and win conditions. Quick version: players alternate, 2
+the laser/mirrors behave, and win conditions. Quick version: players alternate, 3
 actions each turn (move / rotate / fire); reach the opponent's King with the laser to
 win.
