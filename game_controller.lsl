@@ -57,6 +57,7 @@ integer LM_BOARD_FULL  = 8;   // whole board as one CSV -> board_renderer.lsl
 integer LM_RENDER_READY = 9;  // board_renderer.lsl -> us: it (re)started, wants the board
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
+integer LM_SELECT      = 12;  // -> board_renderer.lsl: which cell is selected ("x,y" / "-1,-1")
 integer LM_AI_REQUEST  = 20;
 integer LM_AI_RESPONSE = 21;
 integer LM_CONFIG      = 100;
@@ -335,6 +336,7 @@ spendActions(integer cost) {
     clearHL();
     gState = GS_IDLE;
     gSelX = -1; gSelY = -1;
+    llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);  // selection ended
     if (gActionsLeft <= 0) {
         if (gCurPlayer == P_RED) gCurPlayer = P_GREEN;
         else gCurPlayer = P_RED;
@@ -686,6 +688,35 @@ doMove(integer fx, integer fy, integer tx, integer ty, integer cost) {
     spendActions(cost);
 }
 
+// True if (x,y) holds a piece the current player can pick up this turn.
+integer canSelect(integer x, integer y) {
+    integer cell = bGet(x, y);
+    integer t = cType(cell);
+    return (t != T_EMPTY && !isFeature(t) && cOwner(cell) == gCurPlayer && !cStun(cell));
+}
+
+// Select (x,y): highlight its destinations and tell the renderer (drives the
+// floating hint + which clicks become rotate/fire zones).
+selectPiece(integer x, integer y) {
+    gSelX = x; gSelY = y;
+    gState = GS_SELECTED;
+    clearHL();
+    showDestinations();
+    llMessageLinked(LINK_THIS, LM_SELECT, (string)x + "," + (string)y, NULL_KEY);
+}
+deselect() {
+    gState = GS_IDLE;
+    gSelX = -1; gSelY = -1;
+    clearHL();
+    llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);
+    announceTurn();
+}
+// After a rotate, keep the piece selected (if it's still actionable this turn)
+// so the player can keep turning it; otherwise the turn/selection has ended.
+reselectAfter(integer x, integer y) {
+    if (gState == GS_IDLE && gActionsLeft > 0 && canSelect(x, y)) selectPiece(x, y);
+}
+
 handleTouch(integer x, integer y) {
     if (gState == GS_FIRING) return;            // ignore touches while a beam plays
     if (gState == GS_GAMEOVER) {
@@ -693,6 +724,7 @@ handleTouch(integer x, integer y) {
         initBoard();
         gCurPlayer = P_RED; gActionsLeft = ACTIONS_PER_TURN;
         gState = GS_IDLE; gSelX = -1; gSelY = -1;
+        llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);
         resetTurnState();
         clearHL(); broadcastBoard();
         announceTurn();
@@ -700,60 +732,40 @@ handleTouch(integer x, integer y) {
     }
     if (gAIEnabled && gCurPlayer == gAIPlayer) return;
 
-    integer cell  = bGet(x, y);
-    integer t     = cType(cell);
-    integer owner = cOwner(cell);
-
-    if (gState == GS_IDLE || gState == GS_SELECTED) {
-        if (t != T_EMPTY && !isFeature(t) && owner == gCurPlayer) {
-            if (cStun(cell)) {
-                setStatus("That piece is stunned — it can't act this turn.");
-                return;
-            }
-            gSelX = x; gSelY = y;
-            gState = GS_SELECTED;
-            clearHL();
-            showDestinations();
-            llMessageLinked(LINK_THIS, LM_ACTION,
-                "MENU:" + (string)x + "," + (string)y, NULL_KEY);
-        }
-    } else if (gState == GS_AWAIT_DST) {
-        integer cost = moveCost(gSelX, gSelY, x, y, gActionsLeft);
-        if (cost > 0) {
-            doMove(gSelX, gSelY, x, y, cost);
-        } else {
-            gState = GS_SELECTED;
-            clearHL();
-            showDestinations();
-        }
+    if (gState == GS_IDLE) {
+        if (canSelect(x, y)) selectPiece(x, y);
+        else if (cOwner(bGet(x,y)) == gCurPlayer && cStun(bGet(x,y)))
+            setStatus("That piece is stunned — it can't act this turn.");
+        return;
     }
+
+    // GS_SELECTED. Clicks on the selected piece itself arrive as zone actions
+    // (ROTATE_*/FIRE) from the renderer, not here — so this is a move target,
+    // a different piece to pick up, or a click that cancels the selection.
+    integer cost = moveCost(gSelX, gSelY, x, y, gActionsLeft);
+    if (cost > 0)        doMove(gSelX, gSelY, x, y, cost);   // direct move (spendActions clears selection)
+    else if (canSelect(x, y)) selectPiece(x, y);             // pick up a different piece
+    else                 deselect();                         // empty / illegal -> cancel
 }
 
 handleAction(string action) {
     // Need a selected piece; ignore while a beam plays or the game is over
-    // (control buttons are always live, unlike the old per-piece menu).
+    // (control buttons + click-zones are always live, unlike the old menu).
     if (gSelX < 0 || gState == GS_GAMEOVER || gState == GS_FIRING) return;
+    integer sx = gSelX; integer sy = gSelY;
 
-    if (action == "MOVE") {
-        gState = GS_AWAIT_DST;
-        clearHL();
-        showDestinations();
-        setStatus("Click a highlighted square. (diagonal = 2 actions)");
-
-    } else if (action == "ROTATE_CW") {
-        doRotate(gSelX, gSelY, 1);
+    if (action == "ROTATE_CW") {
+        doRotate(sx, sy, 1);
+        reselectAfter(sx, sy);
 
     } else if (action == "ROTATE_CCW") {
-        doRotate(gSelX, gSelY, 7);
+        doRotate(sx, sy, 7);
+        reselectAfter(sx, sy);
 
     } else if (action == "FIRE") {
         doFire();
-
-    } else if (action == "CANCEL") {
-        gState = GS_IDLE;
-        gSelX = -1; gSelY = -1;
-        clearHL();
-        announceTurn();
+        if (gState == GS_FIRING)            // fire actually started -> drop selection UI
+            llMessageLinked(LINK_THIS, LM_SELECT, "-1,-1", NULL_KEY);
     }
 }
 

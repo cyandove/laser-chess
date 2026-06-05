@@ -28,3 +28,12 @@ splitter_sculptmap
 poct_sculptmap
 7e95cafd-b0e4-9e0c-c273-c3e9d45873f9
 
+rotcw_sculptmap
+
+
+rotccw_sculptmap
+
+
+fire_sculptmap
+
+
