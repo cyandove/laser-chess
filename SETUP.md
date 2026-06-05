@@ -60,10 +60,12 @@ need to name the cells; exact placement is handled in-script.)
 > *only* thing naming the cells. Never run it after the rezzer (Workflow A) — it will
 > overwrite the rezzer's correct `cell_X_Y` names with link-order ones and scramble the board.
 
-`CELL_SIZE` defaults to `1.0`m (a 15×11m board). `board_renderer.lsl` sets the **final**
-cell spacing as it renders, so its `CELL_SIZE` is the authoritative one — keep the builders'
-`CELL_SIZE` (`builder_rezzer.lsl`, `builder_cell_onrez.lsl`, `builder_layout.lsl`) matching it
-so cells rez near their final spots.
+**Board size is measured, not fixed.** `board_renderer.lsl` derives the tile unit from the
+**root prim's width** (`gUnit = root X size / 15`) and scales the whole grid — spacing, tile
+size, piece sizes, and Z offsets — to it, re-laying-out on `CHANGED_SCALE`. So **resize the
+board by resizing the root prim** (the board fills its width). The builders' `CELL_SIZE` only
+sets the transient rez spacing before the renderer relays everything out, so just keep it
+roughly sane (`1.0`).
 
 ## Touch handling
 

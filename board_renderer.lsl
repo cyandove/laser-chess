@@ -15,7 +15,11 @@
 
 integer BOARD_W = 15;
 integer BOARD_H = 11;
-float   CELL_SIZE = 1.0;   // metres per cell — match your build
+
+// Tile size in metres, MEASURED from the board so it resizes with the build:
+// gUnit = root width / BOARD_W (see measureUnit). All other lengths (TILE_SIZE,
+// CELL_ZOFF, SCULPT_SIZE, SCULPT_BASE_Z) are per-unit and scaled by gUnit.
+float   gUnit = 1.0;
 
 integer T_EMPTY     = 0;
 integer T_KING      = 1;
@@ -240,13 +244,20 @@ scanLinks() {
     }
 }
 
+// Measure the tile unit from the board's scale (renderer lives in the root):
+// root width / BOARD_W. Resizing the board re-measures via CHANGED_SCALE.
+measureUnit() {
+    gUnit = llGetScale().x / (float)BOARD_W;
+    if (gUnit <= 0.0) gUnit = 1.0;
+}
+
 // Local XY of a cell relative to the root (centered grid). Z is left to the caller.
 vector cellLocalXY(integer idx) {
     integer x = idx % BOARD_W;
     integer y = idx / BOARD_W;
-    float halfW = (float)(BOARD_W - 1) * 0.5 * CELL_SIZE;
-    float halfH = (float)(BOARD_H - 1) * 0.5 * CELL_SIZE;
-    return <(float)x * CELL_SIZE - halfW, halfH - (float)y * CELL_SIZE, 0.0>;
+    float halfW = (float)(BOARD_W - 1) * 0.5 * gUnit;
+    float halfH = (float)(BOARD_H - 1) * 0.5 * gUnit;
+    return <(float)x * gUnit - halfW, halfH - (float)y * gUnit, 0.0>;
 }
 
 // Render one square from its cached value + highlight state. Computes the grid
@@ -287,7 +298,7 @@ renderIdx(integer idx) {
 
     if (sc != "") {
         // 3D sculptie piece: morph the prim and rotate it to face its orientation.
-        vector sz = llList2Vector(SCULPT_SIZE, t);
+        vector sz = llList2Vector(SCULPT_SIZE, t);   // per-unit token size
         float facing = (float)cOrient(cell) * PI * 0.25;
         // Bomb: spikes sit on the orthogonal faces (+ config). In the diagonal
         // config (bombDiag==1) turn it an extra 45° so they point at the X.
@@ -296,12 +307,12 @@ renderIdx(integer idx) {
         if (llList2Integer(SCULPT_FLIP, t))            // upside-down map: flip upright first
             rot = llAxisAngle2Rot(<1.0,0.0,0.0>, PI) * rot;
         // Stand the token's base on the top of the tile: prim centre = tile top
-        // + half the token height. Nudge SCULPT_BASE_Z if a token floats/sinks.
-        float tileTopZ = CELL_ZOFF + TILE_SIZE.z * 0.5;
+        // + half the token height. Everything scales with the measured tile (gUnit).
+        float centreZ = (CELL_ZOFF + TILE_SIZE.z * 0.5 + SCULPT_BASE_Z + sz.z * 0.5) * gUnit;
         llSetLinkPrimitiveParamsFast(link, [
             PRIM_TYPE, PRIM_TYPE_SCULPT, sc, llList2Integer(SCULPT_STITCH, t),
-            PRIM_SIZE, sz,
-            PRIM_POS_LOCAL, <lx, ly, tileTopZ + SCULPT_BASE_Z + sz.z * 0.5>,
+            PRIM_SIZE, sz * gUnit,
+            PRIM_POS_LOCAL, <lx, ly, centreZ>,
             PRIM_ROT_LOCAL, rot,
             PRIM_COLOR, ALL_SIDES, col, a,
             PRIM_GLOW,  ALL_SIDES, glow,
@@ -313,8 +324,8 @@ renderIdx(integer idx) {
         llSetLinkPrimitiveParamsFast(link, [
             PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0.0,1.0,0.0>, 0.0,
                 <0.0,0.0,0.0>, <1.0,1.0,0.0>, <0.0,0.0,0.0>,
-            PRIM_SIZE, TILE_SIZE,
-            PRIM_POS_LOCAL, <lx, ly, CELL_ZOFF>,
+            PRIM_SIZE, TILE_SIZE * gUnit,
+            PRIM_POS_LOCAL, <lx, ly, CELL_ZOFF * gUnit>,
             PRIM_ROT_LOCAL, ZERO_ROTATION,
             PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
             PRIM_TEXTURE, TOP_FACE,  llList2String(TEX, t), <1.0,1.0,0.0>, <0.0,0.0,0.0>, texRot,
@@ -339,8 +350,8 @@ paintTile(integer idx, vector col, string label) {
     llSetLinkPrimitiveParamsFast(link, [
         PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0.0,1.0,0.0>, 0.0,
             <0.0,0.0,0.0>, <1.0,1.0,0.0>, <0.0,0.0,0.0>,
-        PRIM_SIZE, TILE_SIZE,
-        PRIM_POS_LOCAL, <lp.x, lp.y, CELL_ZOFF>,
+        PRIM_SIZE, TILE_SIZE * gUnit,
+        PRIM_POS_LOCAL, <lp.x, lp.y, CELL_ZOFF * gUnit>,
         PRIM_ROT_LOCAL, ZERO_ROTATION,
         PRIM_TEXTURE, ALL_SIDES, llList2String(TEX, 0), <1.0,1.0,0.0>, <0.0,0.0,0.0>, 0.0,
         PRIM_COLOR, ALL_SIDES, col, 1.0,
@@ -380,6 +391,7 @@ string zoneAction(integer idx) {
 
 default {
     state_entry() {
+        measureUnit();  // tile size from the board's current scale
         initCaches();   // empty board until the controller sends one
         scanLinks();
         // Ask the controller for the current board so EVERY cell renders now
@@ -392,6 +404,8 @@ default {
         // On a re-link, remap link numbers but KEEP the cached board, then
         // repaint so cells stay correct instead of blanking out.
         if (c & CHANGED_LINK) { scanLinks(); renderAll(); }
+        // Board resized -> re-measure the tile unit and relayout at the new size.
+        if (c & CHANGED_SCALE) { measureUnit(); renderAll(); }
     }
 
     touch_start(integer n) {
