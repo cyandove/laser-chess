@@ -41,6 +41,7 @@ integer LM_CLEAR_HL    = 3;
 integer LM_GAME_OVER   = 5;
 integer LM_BEAM        = 7;
 integer LM_BOARD_FULL  = 8;   // whole-board CSV (one message, we loop)
+integer LM_RENDER_READY = 9;  // renderer -> controller: "I'm up, send the board"
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 
@@ -319,8 +320,12 @@ showActionDialog(integer x, integer y) {
 
 default {
     state_entry() {
-        initCaches();   // empty board until the controller broadcasts
+        initCaches();   // empty board until the controller sends one
         scanLinks();
+        // Ask the controller for the current board so EVERY cell renders now
+        // (positions empties too) — don't rely on catching its one-shot
+        // start-up broadcast, which a deploy/reset-order race can miss.
+        llMessageLinked(LINK_ROOT, LM_RENDER_READY, "", NULL_KEY);
     }
 
     changed(integer c) {

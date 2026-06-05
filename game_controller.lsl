@@ -54,6 +54,7 @@ integer LM_LASER_PATH  = 4;
 integer LM_GAME_OVER   = 5;
 integer LM_BEAM        = 7;   // "x,y" -> light a beam cell; "x,y,HIT" -> emphasized
 integer LM_BOARD_FULL  = 8;   // whole board as one CSV -> board_renderer.lsl
+integer LM_RENDER_READY = 9;  // board_renderer.lsl -> us: it (re)started, wants the board
 integer LM_PIECE_TOUCH = 10;
 integer LM_ACTION      = 11;
 integer LM_AI_REQUEST  = 20;
@@ -801,6 +802,10 @@ default {
     timer() { beamTick(); }   // drives the laser beam playback
 
     link_message(integer sender_num, integer num, string str, key id) {
+        if (num == LM_RENDER_READY) {
+            broadcastBoard();   // renderer just (re)started — send it the board
+            return;
+        }
         if (num == LM_PIECE_TOUCH) {
             list xy = llParseString2List(str, [","], []);
             handleTouch(llList2Integer(xy,0), llList2Integer(xy,1));
